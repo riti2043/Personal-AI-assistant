@@ -1,17 +1,16 @@
-from frontend import demo
-from backend import startup, shutdown
 import asyncio
 
-if __name__ == "__main__":
+from frontend import demo
+from backend import startup
 
-    asyncio.run(startup())
 
-    try:
-        demo.launch(
-            server_name="0.0.0.0",
-            server_port=7860,
-            share=False,
-        )
-    finally:
-        asyncio.run(shutdown())
-        
+# Initialize backend services
+asyncio.run(startup())
+
+
+# Launch Gradio
+demo.launch(
+    server_name="0.0.0.0",
+    server_port=7860,
+    share=False,
+)
