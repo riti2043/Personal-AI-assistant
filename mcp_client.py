@@ -4,7 +4,11 @@ from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+import spaces
 
+@spaces.GPU
+def _dummy_gpu_check():
+    pass
 class MCPManager:
 
     def __init__(self):
