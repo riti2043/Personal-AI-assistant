@@ -1,0 +1,256 @@
+What is an Environment Variable?
+
+An environment variable is a key-value pair stored outside the source code that provides configuration or sensitive information to an application.
+
+Example:
+
+OPENAI_API_KEY = sk-...
+
+Instead of writing the API key inside Python code, the program reads it from the environment when it starts.
+
+Why use a .env file?
+
+A .env file is a convenient way to store environment variables during local development.
+
+Benefits:
+
+Keeps secrets out of the source code.
+Makes it easy to use different settings on different machines.
+Prevents accidental exposure of API keys in Git repositories.
+Allows configuration without modifying the application code.
+
+In production, these values are usually supplied by the hosting platform rather than a .env file.
+
+Why not hardcode secrets?
+
+Hardcoding means writing sensitive values directly into the source code.
+
+Example (not recommended):
+
+OPENAI_API_KEY = "sk-xxxxxxxx"
+
+Problems:
+
+Anyone with access to the code can see the key.
+Easy to accidentally commit to GitHub.
+Difficult to rotate or replace keys.
+Every environment (development, testing, production) would require editing the code.
+
+Using environment variables separates configuration from implementation.
+
+Which variables are secrets?
+
+Secrets should never be committed to Git.
+
+For Rune:
+
+OpenAI API Key
+PostgreSQL Password
+GitHub Personal Access Token
+Gmail OAuth Credentials
+Google Calendar Credentials
+Tavily API Key (if used)
+Which variables are configuration?
+
+Configuration values define how the application behaves but are not confidential.
+
+Examples:
+
+Chat Model
+Embedding Model
+Upload Directory
+Cache Directory
+Database Host
+Database Port
+Database Name
+
+These could technically be committed, but keeping them in .env makes changing environments easier.
+
+Which file loads which variables?
+Variable	Loaded By	Purpose
+OPENAI_API_KEY	openai_client.py	Authenticate with OpenAI
+CHAT_MODEL	openai_client.py	Select chat model
+EMBEDDING_MODEL	openai_client.py (or embedding service)	Select embedding model
+DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD	database.py	Connect to PostgreSQL
+GITHUB_TOKEN	tools.py	GitHub API access
+GMAIL_CREDENTIALS	tools.py	Gmail API access
+GOOGLE_CALENDAR_CREDENTIALS	tools.py	Calendar API access
+TAVILY_API_KEY	tools.py	Web search
+UPLOAD_DIRECTORY	backend.py	Location for uploaded files
+CACHE_DIRECTORY	backend.py	Temporary storage
+Why make model names configurable?
+
+Instead of writing:
+
+model = "gpt-4.1"
+
+inside the code, you store:
+
+CHAT_MODEL=gpt-4.1
+
+Advantages:
+
+Switch models without modifying code.
+Compare different models easily.
+Use cheaper models during development.
+Use stronger models in production.
+
+The same principle applies to the embedding model.
+
+Why are we storing EMBEDDING_MODEL if BGE is local?
+
+Because configuration should describe what to use, not how it works.
+
+Today:
+
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+
+Later, you could change it to:
+
+EMBEDDING_MODEL=text-embedding-3-small
+
+or another supported model, and the rest of your code can continue asking, "What embedding model should I use?" without being tied to a specific implementation.
+
+
+llm_client.py
+
+Responsible for:
+
+Loading API keys
+Loading model names
+Initializing the LLM
+Initializing the embedding model
+Rate limiting requests
+Retry logic
+Token usage tracking
+Returning the configured model to the rest of Rune
+
+What is an LLM Client?
+
+The LLM Client acts as the single interface between Rune and any language model.
+
+Instead of allowing different parts of the application to create their own API clients, every request passes through this file.
+
+Benefits:
+
+Centralized configuration
+Easier provider switching
+Easier debugging
+Easier rate limiting
+Easier logging
+Why have a separate LLM Client?
+
+Imagine every file creates its own Groq client.
+
+backend.py
+
+↓
+
+ChatGroq()
+
+tools.py
+
+↓
+
+ChatGroq()
+
+rag.py
+
+↓
+
+ChatGroq()
+
+Now suppose you decide to switch to OpenAI.
+
+You must edit every file.
+
+Instead
+
+backend
+
+↓
+
+LLM Client
+
+↓
+
+Groq
+
+Later
+
+backend
+
+↓
+
+LLM Client
+
+↓
+
+OpenAI
+
+One file changes.
+
+Everything else stays.
+
+Why is the embedding model here?
+
+Embeddings are produced by an AI model.
+
+They are not part of PostgreSQL.
+
+They are not part of RAG.
+
+The embedding model is another machine learning model, so it belongs with the LLM configuration.
+
+RAG simply uses it.
+
+Why not create the LLM inside backend.py?
+
+Because backend.py should focus on agent orchestration (LangGraph, memory, planner, routing).
+
+If backend.py also manages API keys, model initialization, retries, and provider switching, it takes on too many responsibilities.
+
+Separating the LLM client keeps the backend focused on how the agent thinks, while the LLM client focuses on how the agent communicates with language models.
+
+Why use decorators?
+
+A decorator allows additional behavior to be added to a function without modifying the function's implementation.
+
+For Rune:
+
+Backend
+
+↓
+
+invoke()
+
+↓
+
+@retry
+
+↓
+
+@rate_limit
+
+↓
+
+Groq
+
+The backend only calls invoke(). It doesn't need to know anything about retries or waiting for rate limits.
+
+Why rate limit if Groq already has limits?
+
+There are three reasons:
+
+Prevent hitting Groq's API limits during development.
+Avoid accidental request bursts caused by loops or bugs.
+Make migration to OpenAI seamless, since the same protection will already be be in place.
+Why retry?
+
+Network requests can fail temporarily because of:
+
+transient network issues
+server overload
+temporary API errors
+
+Automatically retrying a small number of times makes the assistant more robust without requiring the user to resend the request.
