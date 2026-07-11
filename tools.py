@@ -1,3 +1,5 @@
+import os
+from dotenv import load_dotenv
 from langchain_core.tools import tool
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import (
@@ -5,28 +7,94 @@ from langchain_community.document_loaders import (
     TextLoader,
     UnstructuredWordDocumentLoader,
 )
-from dotenv import load_dotenv
 from langchain_postgres import PGVector
 from openai_client import embedding_model
 from database import (
     SessionLocal,
     add_document,
-    list_documents,
     get_document,
-    delete_document,
+    list_documents,
+    add_repository,
+    get_repositories,
+    delete_repository,
 )
 
 from permissions import check_permission
 from mcp_client import mcp
-import os
+import shutil
+import subprocess
+from pathlib import Path
 
+from langchain_community.document_loaders import DirectoryLoader
+
+#Environment
 load_dotenv()
+#Vector store for document retrieval
 vector_store = PGVector(
     embeddings=embedding_model,
     collection_name="rune_documents",
     connection=os.getenv("DATABASE_URL"),
 )
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 200
+TOP_K = 4
+SUPPORTED_REPOSITORY_FILES = {
+    ".py",
+    ".md",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".html",
+    ".css",
+}
 
+IGNORE_DIRECTORIES = {
+    ".git",
+    "node_modules",
+    "__pycache__",
+    "venv",
+    ".venv",
+    "build",
+    "dist",
+}
+
+#generic MCP executor
+async def execute_mcp_tool(
+    server_name: str,
+    tool_name: str,
+    arguments: dict,
+    permission_type: str,
+    target: str,
+    reason: str,
+) -> str:
+    """
+    Check permissions and execute an MCP tool.
+    """
+
+    approved = check_permission(
+        permission_type=permission_type,
+        action=f"{server_name.title()}: {tool_name}",
+        target=target,
+        reason=reason,
+    )
+
+    if not approved:
+        return "Permission denied."
+
+    result = await mcp.call_tool(
+        server_name=server_name,
+        tool_name=tool_name,
+        arguments=arguments,
+    )
+
+    return str(result)
+#For detecting extension and loading accordingly
 def load_document(file_path: str):
 
     extension = os.path.splitext(file_path)[1].lower()
@@ -45,45 +113,61 @@ def load_document(file_path: str):
 
     return loader.load()
 
-def upload_document_impl(file_path: str):
+def upload_document_impl(session_id: str,file_path: str,):
 
-    documents = load_document(file_path)
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
-    )
-
-    chunks = splitter.split_documents(documents)
-
-    filename = os.path.basename(file_path)
-
-    for i, chunk in enumerate(chunks):
-        chunk.metadata["source"] = filename
-        chunk.metadata["chunk"] = i + 1
-
-    vector_store.add_documents(chunks)
+    filename = os.path.basename(file_path).strip()
 
     db = SessionLocal()
 
-    add_document(
-        db=db,
-        filename=filename,
-        num_chunks=len(chunks),
-    )
+    try:
+        existing = get_document(
+            db=db,
+            filename=filename,
+        )
 
-    db.close()
+        if existing:
+            return f"'{filename}' is already indexed."
 
-    return f"Successfully indexed '{filename}' ({len(chunks)} chunks)."
+        documents = load_document(file_path)
 
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=CHUNK_SIZE,
+            chunk_overlap=CHUNK_OVERLAP,
+        )
 
-def list_uploaded_documents_impl():
+        chunks = splitter.split_documents(documents)
+
+        for i, chunk in enumerate(chunks):
+            chunk.metadata["source"] = filename
+            chunk.metadata["chunk"] = i + 1
+            chunk.metadata["total_chunks"] = len(chunks)
+
+        vector_store.add_documents(chunks)
+
+        document= add_document(
+            db=db,
+            session_id=session_id,
+            filename=filename,
+            num_chunks=len(chunks),
+        )
+
+        return (
+            f"Successfully indexed '{filename}' "
+            f"({len(chunks)} chunks)."
+        )
+
+    finally:
+        db.close()   
+
+def list_uploaded_documents_impl(session_id=session_id,):
 
     db = SessionLocal()
 
-    documents = list_documents(db)
+    try:
+        documents = list_documents(db,session_id=session_id,)
 
-    db.close()
+    finally:
+        db.close()
 
     if not documents:
         return []
@@ -91,36 +175,177 @@ def list_uploaded_documents_impl():
     return [
         document.filename
         for document in documents
-    ]    
+    ]
+def clone_repository(
+    repo_url: str,
+) -> Path:
+
+    repo_name = repo_url.rstrip("/").split("/")[-1]
+
+    repo_path = Path("repositories") / repo_name
+
+    if repo_path.exists():
+        shutil.rmtree(repo_path)
+
+    subprocess.run(
+        [
+            "git",
+            "clone",
+            repo_url,
+            str(repo_path),
+        ],
+        check=True,
+    )
+
+    return repo_path
+
+def load_repository(
+    repo_path: Path,
+):
+
+    documents = []
+
+    for file_path in repo_path.rglob("*"):
+
+        if (
+            not file_path.is_file()
+            or file_path.suffix.lower()
+            not in SUPPORTED_REPOSITORY_FILES
+        ):
+            continue
+
+        if any(
+            ignored in file_path.parts
+            for ignored in IGNORE_DIRECTORIES
+        ):
+            continue
+
+        loader = TextLoader(
+            str(file_path),
+            encoding="utf-8",
+        )
+
+        try:
+            docs = loader.load()
+
+            for doc in docs:
+                doc.metadata["source"] = repo_path.name
+                doc.metadata["path"] = str(
+                    file_path.relative_to(repo_path)
+                )
+                doc.metadata["type"] = "repository"
+
+            documents.extend(docs)
+
+        except Exception:
+            continue
+
+    return documents
+
+def index_repository_impl(
+    repo_url: str,
+):
+
+    repo_path = clone_repository(repo_url)
+
+    documents = load_repository(repo_path)
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+    )
+
+    chunks = splitter.split_documents(documents)
+
+    vector_store.add_documents(chunks)
+
+    db = SessionLocal()
+
+    try:
+
+        add_repository(
+            db=db,
+            session_id="",      # we'll wire session later
+            name=repo_path.name,
+            url=repo_url,
+            num_files=len(documents),
+        )
+
+    finally:
+        db.close()
+
+    return (
+        f"Indexed '{repo_path.name}' "
+        f"({len(documents)} files)."
+    )
+def list_repositories_impl():
+
+    db = SessionLocal()
+
+    try:
+
+        repositories = get_repositories(
+            db=db,
+            session_id="",      # session later
+        )
+
+    finally:
+        db.close()
+
+    return [
+        repository.name
+        for repository in repositories
+    ]
+
+def delete_repository_impl(
+    repository_id: int,
+):
+
+    db = SessionLocal()
+
+    try:
+
+        deleted = delete_repository(
+            db=db,
+            repository_id=repository_id,
+        )
+
+    finally:
+        db.close()
+
+    return deleted
 
 @tool
-def upload_document(file_path: str):
+def upload_document(session_id=session_id,file_path: str,):
     """Upload and index a document for retrieval."""
-    return upload_document_impl(file_path)
+    return upload_document_impl(session_id=session_id,file_path=file_path)
+
+
+@tool
+def list_uploaded_documents( session_id: str,):
+    """List all indexed documents."""
+    return list_uploaded_documents_impl( session_id,)
 
 @tool
 def rag_tool(query:str):
     """Retrieve relevant document chunks based on a query."""
     # Retrieve relevant document chunks.
     docs = vector_store.similarity_search(
-        query,
-        k=4,
+       query=query,
+        k=TOP_K,
     )
     if not docs:
         return "No documents have been uploaded."
     return "\n\n".join(
-        doc.page_content
+    (
+        f"[{doc.metadata['source']} | "
+        f"Chunk {doc.metadata['chunk']}/"
+        f"{doc.metadata['total_chunks']}]\n"
+        f"{doc.page_content}"
+    )
         for doc in docs
-    )    
-
-@tool
-def list_uploaded_documents():
-    """List all indexed documents."""
-    return list_uploaded_documents_impl()
-# ==========================================================
-# GitHub
-# ==========================================================
-
+)
+   
 @tool
 async def github(
     tool_name: str,
@@ -130,28 +355,28 @@ async def github(
     Execute GitHub MCP tools.
     """
 
-    approved = check_permission(
-        permission_type="github_write" if "create" in tool_name or "update" in tool_name or "delete" in tool_name or "merge" in tool_name else "github_read",
-        action=f"GitHub: {tool_name}",
-        target=arguments.get("repo", "GitHub"),
-        reason="GitHub operation requested.",
+    permission = (
+        "github_write"
+        if any(
+            word in tool_name
+            for word in (
+                "create",
+                "update",
+                "delete",
+                "merge",
+            )
+        )
+        else "github_read"
     )
 
-    if not approved:
-        return "Permission denied."
-
-    result = await mcp.call_tool(
+    return await execute_mcp_tool(
         server_name="github",
         tool_name=tool_name,
         arguments=arguments,
+        permission_type=permission,
+        target=arguments.get("repo", "GitHub"),
+        reason="GitHub operation requested.",
     )
-
-    return str(result)
-
-
-# ==========================================================
-# Filesystem
-# ==========================================================
 
 @tool
 async def filesystem(
@@ -168,40 +393,26 @@ async def filesystem(
         else "filesystem_write"
         if any(
             word in tool_name
-            for word in [
+            for word in (
                 "write",
                 "edit",
                 "create",
                 "rename",
                 "move",
                 "copy",
-            ]
+            )
         )
         else "filesystem_read"
     )
 
-    approved = check_permission(
-        permission_type=permission,
-        action=f"Filesystem: {tool_name}",
-        target=arguments.get("path", "Filesystem"),
-        reason="Filesystem operation requested.",
-    )
-
-    if not approved:
-        return "Permission denied."
-
-    result = await mcp.call_tool(
+    return await execute_mcp_tool(
         server_name="filesystem",
         tool_name=tool_name,
         arguments=arguments,
+        permission_type=permission,
+        target=arguments.get("path", "Filesystem"),
+        reason="Filesystem operation requested.",
     )
-
-    return str(result)
-
-
-# ==========================================================
-# Gmail
-# ==========================================================
 
 @tool
 async def gmail(
@@ -216,39 +427,24 @@ async def gmail(
         "gmail_send"
         if any(
             word in tool_name
-            for word in [
+            for word in (
                 "send",
                 "reply",
                 "forward",
                 "delete",
-            ]
+            )
         )
         else "gmail_read"
     )
 
-    approved = check_permission(
-        permission_type=permission,
-        action=f"Gmail: {tool_name}",
-        target="Gmail",
-        reason="Gmail access requested.",
-    )
-
-    if not approved:
-        return "Permission denied."
-
-    result = await mcp.call_tool(
+    return await execute_mcp_tool(
         server_name="gmail",
         tool_name=tool_name,
         arguments=arguments,
+        permission_type=permission,
+        target="Gmail",
+        reason="Gmail access requested.",
     )
-
-    return str(result)
-
-
-# ==========================================================
-# Google Calendar
-# ==========================================================
-
 @tool
 async def calendar(
     tool_name: str,
@@ -260,44 +456,31 @@ async def calendar(
 
     permission = (
         "calendar_read"
-        if "list" in tool_name or "get" in tool_name
+        if any(
+            word in tool_name
+            for word in (
+                "list",
+                "get",
+            )
+        )
         else "calendar_create"
     )
 
-    approved = check_permission(
-        permission_type=permission,
-        action=f"Calendar: {tool_name}",
-        target="Google Calendar",
-        reason="Calendar access requested.",
-    )
-
-    if not approved:
-        return "Permission denied."
-
-    result = await mcp.call_tool(
+    return await execute_mcp_tool(
         server_name="calendar",
         tool_name=tool_name,
         arguments=arguments,
+        permission_type=permission,
+        target="Google Calendar",
+        reason="Calendar access requested.",
     )
-
-    return str(result)
-
-
-# ==========================================================
-# Smart Search
-# ==========================================================
-
+    
 @tool
 def search(query: str) -> str:
     """
     Search the web.
     """
     return "Search integration not implemented yet."
-
-
-# ==========================================================
-# Web Scraping
-# ==========================================================
 
 @tool
 def scrape(url: str) -> str:
@@ -306,15 +489,10 @@ def scrape(url: str) -> str:
     """
     return "Web scraping integration not implemented yet."
 
-
-# ==========================================================
-# All Tools
-# ==========================================================
-
 tools = [
     upload_document,
-    rag_tool,
     list_uploaded_documents,
+    rag_tool,
     github,
     filesystem,
     gmail,

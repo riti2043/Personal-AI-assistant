@@ -1,12 +1,15 @@
-from dotenv import load_dotenv
-from langchain_groq import ChatGroq
-from langchain_huggingface import HuggingFaceEmbeddings
 import os
 import time
 from functools import wraps
+from dotenv import load_dotenv
+from langchain_groq import ChatGroq
+from langchain_huggingface import HuggingFaceEmbeddings
 
 # Load environment variables
 load_dotenv()
+MAX_REQUESTS = int(os.getenv("MAX_REQUESTS_PER_MINUTE"))
+MAX_RETRIES = int(os.getenv("MAX_RETRIES"))
+RETRY_DELAY = int(os.getenv("RETRY_DELAY"))
 
 # intializing Chat model
 chat_model= ChatGroq(
@@ -23,11 +26,7 @@ embedding_model = HuggingFaceEmbeddings(
 )
 
 # Rate Limiter
-# ----------------------------------
-
-MAX_REQUESTS = int(os.getenv("MAX_REQUESTS_PER_MINUTE"))
-request_timestamps = []
-
+request_timestamps: list[float] = []
 
 def rate_limit(func):
     @wraps(func)
@@ -52,14 +51,7 @@ def rate_limit(func):
 
     return wrapper
 
-
-# ----------------------------------
 # Retry Decorator
-# ----------------------------------
-
-MAX_RETRIES = int(os.getenv("MAX_RETRIES"))
-RETRY_DELAY = int(os.getenv("RETRY_DELAY"))
-
 
 def retry(func):
     @wraps(func)

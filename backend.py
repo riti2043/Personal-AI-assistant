@@ -8,115 +8,84 @@ from langgraph.graph import START
 
 from langgraph.types import interrupt, Command
 from prompts import SYSTEM_PROMPT
-from database import init_db
+from database import (
+    SessionLocal,
+    init_db,
+    create_conversation,
+     get_conversations,
+    delete_conversation,
+    save_message,
+    get_messages,
+)
 from mcp_client import mcp
+from permissions import (
+    register_permission_handler,
+)
 
 from tools import tools
 from openai_client import chat_model
 from langgraph.checkpoint.memory import MemorySaver
 
 
-
-class RuneState(TypedDict):
-    #Conversation
-    messages: Annotated[list[AnyMessage],add_messages]
-    thread_id:str
-
-    #Planning
-    current_plan:Optional[str]
-
-    #Memory
-    short_term_memory: Optional[list]
-    long_term_memory: Optional[list]
-
-    # Knowledge Graph
-    knowledge_graph_context: Optional[list]
-    #RAG
-    retrieved_context:Optional[str]
-    uploaded_documents:Optional[list]
-    
-    #Tool Calling
-    tool_name: Optional[str]
-    tool_input: Optional[dict]
-    tool_output: Optional[dict]
-
-    #HUman in the loop
-    approval_required: Optional[bool]
-    approval_status:Optional[bool]
-
-    #Final Response
-    final_response:Optional[str]
 chat_model=chat_model.bind_tools(tools)
+class RuneState(TypedDict):
 
-def assistant(state: RuneState):
-    messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
-     *state["messages"],
-    ]
+    # -------------------------
+    # Conversation
+    # -------------------------
 
-    response =  chat_model.invoke(messages)
+    messages: Annotated[list[AnyMessage], add_messages]
+    session_id: str
+    thread_id: str
 
-    return{
-            "messages":[response]
-        }
+    # -------------------------
+    # User Context
+    # -------------------------
 
-graph_builder=StateGraph(RuneState)     
-graph_builder.add_node("assistant",assistant)   
-tool_node = ToolNode(tools)
+    short_term_memory: Optional[list[AnyMessage]]
+    long_term_memory: Optional[list[str]]
+    knowledge_graph_context: Optional[list[str]]
 
-graph_builder.add_node("tools", tool_node)
+    # -------------------------
+    # Knowledge
+    # -------------------------
 
-graph_builder.add_edge(START,"assistant")
+    retrieved_context: Optional[str]
+    uploaded_documents: Optional[list[str]]
 
-graph_builder.add_conditional_edges(
-    "assistant",
-    tools_condition
-)
-graph_builder.add_edge(
-    "tools",
-    "assistant",
-)
+    # -------------------------
+    # Planning
+    # -------------------------
 
-checkpointer = MemorySaver()
-graph = graph_builder.compile(
-    checkpointer=checkpointer
-)
+    current_plan: Optional[str]
 
-async def startup():
+    # -------------------------
+    # Tool Calling
+    # -------------------------
 
-    init_db()
+    tool_name: Optional[str]
+    tool_input: Optional[dict[str, object]]
+    tool_output: Optional[str]
 
-    await mcp.startup()
+    # -------------------------
+    # Human in the Loop
+    # -------------------------
 
+    approval_required: Optional[bool]
+    approval_status: Optional[bool]
 
-async def shutdown():
+    
+    # Final Response
+   
 
-    await mcp.disconnect()
+    final_response: Optional[str]
 
-SENSITIVE_ACTIONS = {
-    "github_read",
-    "github_write",
-    "filesystem_read",
-    "filesystem_write",
-    "filesystem_delete",
-    "gmail_read",
-    "gmail_send",
-    "calendar_read",
-    "calendar_create",
-    "calendar_update",
-    "calendar_delete",
-}
-
-
-def needs_permission(action: str) -> bool:
-    return action in SENSITIVE_ACTIONS
-
-
-def request_permission(
+#Permission
+def permission_interrupt(
     action: str,
     target: str,
     reason: str,
-) -> bool:
+):
 
     return interrupt(
         {
@@ -126,59 +95,89 @@ def request_permission(
         }
     )
 
+def assistant(state: RuneState):
 
-from database import (
-    SessionLocal,
-    create_conversation,
-    save_message,
-    get_messages,
+    messages = [
+        SystemMessage(
+            content=SYSTEM_PROMPT,
+        ),
+        *state["messages"],
+    ]
+
+    response = chat_model.invoke(messages)
+
+    return {
+        "messages": [response],
+    }
+
+#Graph construction
+graph_builder = StateGraph(RuneState)
+
+graph_builder.add_node(
+    "assistant",
+    assistant,
 )
 
+tool_node = ToolNode(tools)
 
+graph_builder.add_node(
+    "tools",
+    tool_node,
+)
+
+graph_builder.add_edge(
+    START,
+    "assistant",
+)
+
+graph_builder.add_conditional_edges(
+    "assistant",
+    tools_condition,
+)
+
+graph_builder.add_edge(
+    "tools",
+    "assistant",
+)
+
+checkpointer = MemorySaver() #
+
+graph = graph_builder.compile(
+    checkpointer=checkpointer,
+)
+
+#Lifetime
+async def startup():
+    """
+    Initialize Rune's backend services.
+    """
+
+    init_db()
+
+    register_permission_handler(
+        permission_interrupt,
+    )
+
+    await mcp.startup()
+
+async def shutdown():
+    """
+    Gracefully shut down Rune.
+    """
+
+    await mcp.disconnect()
+
+#COnversation management
 def start_chat():
 
     db = SessionLocal()
 
-    conversation = create_conversation(db)
+    try:
+        conversation = create_conversation(db)
+        return conversation.thread_id
 
-    db.close()
-
-    return conversation.thread_id
-
-
-def resume_chat(thread_id: str):
-
-    db = SessionLocal()
-
-    messages = get_messages(
-        db=db,
-        thread_id=thread_id,
-    )
-
-    db.close()
-
-    history = []
-
-    for message in messages:
-
-        if message.role == "user":
-
-            history.append(
-                HumanMessage(
-                    content=message.content,
-                )
-            )
-
-        else:
-
-            history.append(
-                AIMessage(
-                    content=message.content,
-                )
-            )
-
-    return history
-
+    finally:
+        db.close()
 
 def save_chat(
     thread_id: str,
@@ -188,24 +187,81 @@ def save_chat(
 
     db = SessionLocal()
 
-    save_message(
-        db=db,
-        thread_id=thread_id,
-        role="user",
-        content=user_message,
-    )
+    try:
+        save_message(
+            db=db,
+            thread_id=thread_id,
+            role="user",
+            content=user_message,
+        )
 
-    save_message(
-        db=db,
-        thread_id=thread_id,
-        role="assistant",
-        content=assistant_message,
-    )
+        save_message(
+            db=db,
+            thread_id=thread_id,
+            role="assistant",
+            content=assistant_message,
+        )
 
-    db.close()
+    finally:
+        db.close()        
 
 
-def chat(    thread_id: str,
+def resume_chat(
+    thread_id: str,
+):
+
+    db = SessionLocal()
+
+    try:
+        messages = get_messages(
+            db=db,
+            thread_id=thread_id,
+        )
+
+    finally:
+        db.close()
+
+    history = []
+
+    for message in messages:
+
+        history.append(
+            HumanMessage(content=message.content)
+            if message.role == "user"
+            else AIMessage(content=message.content)
+        )
+
+    return history
+
+def list_conversations():
+
+    db = SessionLocal()
+
+    try:
+        return get_conversations(db)
+
+    finally:
+        db.close()
+
+def remove_conversation(
+    thread_id: str,
+):
+
+    db = SessionLocal()
+
+    try:
+        return delete_conversation(
+            db=db,
+            thread_id=thread_id,
+        )
+
+    finally:
+        db.close()
+
+
+def chat(
+    thread_id: str,
+    session_id: str
     user_input: str,
 ):
 
@@ -215,6 +271,7 @@ def chat(    thread_id: str,
         "messages": history + [
             HumanMessage(content=user_input)
         ],
+        "session_id": session_id,
         "thread_id": thread_id,
     }
 
@@ -224,10 +281,11 @@ def chat(    thread_id: str,
         }
     }
 
-    result =  graph.invoke(
+    result = graph.invoke(
         state,
         config=config,
     )
+
     if "__interrupt__" in result:
         return result
 
@@ -239,10 +297,12 @@ def chat(    thread_id: str,
         assistant_message=assistant_response,
     )
 
-    return assistant_response    
+    return assistant_response
+
 
 def stream_chat(
     thread_id: str,
+    "session_id": session_id,
     user_input: str,
 ):
 
@@ -252,6 +312,7 @@ def stream_chat(
         "messages": history + [
             HumanMessage(content=user_input)
         ],
+        "session_id": session_id,
         "thread_id": thread_id,
     }
 
@@ -268,12 +329,17 @@ def stream_chat(
         config=config,
         stream_mode="messages",
     ):
+
         if "__interrupt__" in event:
             yield event
             return
+
         message = event[0]
 
-        if hasattr(message, "content"):
+        if (
+            hasattr(message, "content")
+            and isinstance(message.content, str)
+        ):
 
             response += message.content
 
@@ -283,10 +349,12 @@ def stream_chat(
         thread_id=thread_id,
         user_message=user_input,
         assistant_message=response,
-    )    
+    )
+
 
 def resume_after_permission(
     thread_id: str,
+    "session_id": session_id,
     approved: bool,
 ):
 
@@ -306,11 +374,17 @@ def resume_after_permission(
 
     assistant_response = result["messages"][-1].content
 
-    save_message(
-        db=SessionLocal(),
-        thread_id=thread_id,
-        role="assistant",
-        content=assistant_response,
-    )
+    db = SessionLocal()
+
+    try:
+        save_message(
+            db=db,
+            thread_id=thread_id,
+            role="assistant",
+            content=assistant_response,
+        )
+
+    finally:
+        db.close()
 
     return assistant_response

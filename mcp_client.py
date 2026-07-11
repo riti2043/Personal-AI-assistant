@@ -1,19 +1,16 @@
-import asyncio
 from contextlib import AsyncExitStack
-
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-
 import spaces
-
 @spaces.GPU
 def _dummy_gpu_check():
     pass
+
 class MCPManager:
 
     def __init__(self):
         self.exit_stack = AsyncExitStack()
-        self.sessions = {}
+        self.sessions = dict[str, ClientSession] = {}
 
     async def connect(
         self,
@@ -22,7 +19,8 @@ class MCPManager:
         args: list[str],
         env: dict | None = None,
     ):
-
+        if server_name in self.sessions:
+            return
         server = StdioServerParameters(
             command=command,
             args=args,
@@ -53,29 +51,39 @@ class MCPManager:
         self.sessions.clear()
 
     async def list_tools(
-        self,
-        server_name: str,
+    self,
+    server_name: str,
     ):
 
-        session = self.sessions[server_name]
+        session = self.sessions.get(server_name)
+
+        if session is None:
+            raise RuntimeError(
+            f"MCP server '{server_name}' is not connected."
+        )
 
         result = await session.list_tools()
 
         return result.tools
 
     async def call_tool(
-        self,
-        server_name: str,
-        tool_name: str,
-        arguments: dict,
+    self,
+    server_name: str,
+    tool_name: str,
+    arguments: dict,    
     ):
 
-        session = self.sessions[server_name]
+        session = self.sessions.get(server_name)
+
+        if session is None:
+            raise RuntimeError(
+            f"MCP server '{server_name}' is not connected."
+        )
 
         result = await session.call_tool(
-            tool_name,
-            arguments,
-        )
+        tool_name,
+        arguments,
+    )
 
         return result
 
@@ -84,28 +92,47 @@ class MCPManager:
         return list(self.sessions.keys())
     
     async def startup(self):
-
-        await self.connect(
-            server_name="github",
-            command="npx",
-            args=[
+        servers = [
+    (
+        "github",
+        "npx",
+        [
             "-y",
             "@modelcontextprotocol/server-github",
         ],
-    )
-
-        await self.connect(
-            server_name="filesystem",
-            command="npx",
-            args=[
+    ),
+    (
+        "filesystem",
+        "npx",
+        [
             "-y",
             "@modelcontextprotocol/server-filesystem",
             ".",
         ],
-    )
+    ),
+    (
+        "gmail",
+        "npx",
+        [
+            "-y",
+            "@gongrzhe/server-gmail-autoauth-mcp",
+        ],
+    ),
+    (
+        "calendar",
+        "npx",
+        [
+            "-y",
+            "@cocal/google-calendar-mcp",
+        ],
+    ),
+]
 
-    # Gmail
-    # Calendar
-    # Add later
+        for server_name, command, args in servers:
+            await self.connect(
+            server_name=server_name,
+            command=command,
+            args=args,
+        )
 
 mcp = MCPManager() 

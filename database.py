@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
-
+from secrets import token_urlsafe
 from sqlalchemy.orm import Session
 from uuid import uuid4
 from models import Conversation
@@ -37,20 +37,62 @@ SessionLocal =sessionmaker(
 )
 
 Base =declarative_base()
+class SessionModel(Base):
 
-class Conversation(Base):
-    __tablename__ = "conversations"
+    __tablename__ = "sessions"
 
-    id = Column(Integer, primary_key=True)
-    thread_id = Column(String, unique=True, nullable=False)
-    title = Column(String)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
     )
 
+    session_id = Column(
+        String,
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )
+
+    last_active = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+class Conversation(Base):
+
+    __tablename__ = "conversations"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    session_id = Column(
+        String,
+        ForeignKey("sessions.session_id"),
+        nullable=False,
+        index=True,
+    )
+
+    thread_id = Column(
+        String,
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )
 
 class Message(Base):
     __tablename__ = "messages"
@@ -103,58 +145,115 @@ def get_db():
         yield db
     finally:
         db.close()    
+def create_session(db: Session):
 
-def create_conversation(db: Session):
+    session = SessionModel(
+        session_id=token_urlsafe(32),
+    )
+
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    return session
+
+
+def get_session(
+    db: Session,
+    session_id: str,
+):
+
+    return (
+        db.query(SessionModel)
+        .filter(
+            SessionModel.session_id == session_id
+        )
+        .first()
+    )
+
+
+def update_session(
+    db: Session,
+    session_id: str,
+):
+
+    session = get_session(
+        db=db,
+        session_id=session_id,
+    )
+
+    if session:
+        session.last_active = datetime.utcnow()
+        db.commit()
+
+    return session        
+
+def create_conversation(
+    db: Session,
+    session_id: str,
+):
 
     thread_id = str(uuid4())
 
     conversation = Conversation(
+        session_id=session_id,
         thread_id=thread_id,
     )
 
     db.add(conversation)
+
     db.commit()
+
     db.refresh(conversation)
 
     return conversation
+
+def get_conversations(
+    db: Session,
+    session_id: str,
+):
+
+    return (
+        db.query(Conversation)
+        .filter(
+            Conversation.session_id == session_id
+        )
+        .order_by(
+            Conversation.created_at.desc()
+        )
+        .all()
+    )
+
 
 def get_conversation(
     db: Session,
     thread_id: str,
 ):
+
     return (
         db.query(Conversation)
-        .filter(Conversation.thread_id == thread_id)
+        .filter(
+            Conversation.thread_id == thread_id
+        )
         .first()
     )
-
-
-def list_conversations(
-    db: Session,
-):
-    return (
-        db.query(Conversation)
-        .order_by(Conversation.updated_at.desc())
-        .all()
-    )
-
 def delete_conversation(
     db: Session,
     thread_id: str,
 ):
-    (
-        db.query(Message)
-        .filter(Message.thread_id == thread_id)
-        .delete()
+
+    conversation = get_conversation(
+        db=db,
+        thread_id=thread_id,
     )
 
-    (
-        db.query(Conversation)
-        .filter(Conversation.thread_id == thread_id)
-        .delete()
-    )
+    if conversation is None:
+        return False
 
+    db.delete(conversation)
     db.commit()
+
+    return True
 
 def save_message(
     db: Session,
@@ -204,44 +303,250 @@ def get_messages(
 
 def save_memory(
     db: Session,
-    key: str,
-    value: str,
+    session_id: str,
+    content: str,
+):
+
+    memory = Memory(
+        session_id=session_id,
+        content=content,
+    )
+
+    db.add(memory)
+    db.commit()
+    db.refresh(memory)
+
+    return memory
+
+def get_memories(
+    db: Session,
+    session_id: str,
+):
+
+    return (
+        db.query(Memory)
+        .filter(
+            Memory.session_id == session_id
+        )
+        .order_by(
+            Memory.updated_at.desc()
+        )
+        .all()
+    )
+def update_memory(
+    db: Session,
+    memory_id: int,
+    content: str,
 ):
 
     memory = (
         db.query(Memory)
-        .filter(Memory.key == key)
+        .filter(
+            Memory.id == memory_id,
+        )
         .first()
     )
 
-    if memory:
-        memory.value = value
+    if memory is None:
+        return None
 
-    else:
-        memory = Memory(
-            key=key,
-            value=value,
-        )
-        db.add(memory)
+    memory.content = content
+    memory.updated_at = datetime.utcnow()
 
     db.commit()
+    db.refresh(memory)
 
-
-def get_memory(
+    return memory    
+def delete_memory(
     db: Session,
-    key: str,
+    memory_id: int,
 ):
 
     memory = (
         db.query(Memory)
-        .filter(Memory.key == key)
+        .filter(
+            Memory.id == memory_id,
+        )
         .first()
     )
 
-    if memory:
-        return memory.value
+    if memory is None:
+        return False
 
-    return None
+    db.delete(memory)
+    db.commit()
+
+    return True
+
+def add_repository(
+    db: Session,
+    session_id: str,
+    name: str,
+    url: str,
+    num_files: int = 0,
+):
+
+    repository = Repository(
+        session_id=session_id,
+        name=name,
+        url=url,
+        num_files=num_files,
+    )
+
+    db.add(repository)
+    db.commit()
+    db.refresh(repository)
+
+    return repository
+
+def get_repository(
+    db: Session,
+    repository_id: int,
+):
+
+    return (
+        db.query(Repository)
+        .filter(
+            Repository.id == repository_id,
+        )
+        .first()
+    )        
+
+def get_repositories(
+    db: Session,
+    session_id: str,
+):
+
+    return (
+        db.query(Repository)
+        .filter(
+            Repository.session_id == session_id,
+        )
+        .order_by(
+            Repository.indexed_at.desc(),
+        )
+        .all()
+    )    
+
+def update_repository(
+    db: Session,
+    repository_id: int,
+    *,
+    name: str | None = None,
+    url: str | None = None,
+    num_files: int | None = None,
+):
+
+    repository = get_repository(
+        db=db,
+        repository_id=repository_id,
+    )
+
+    if repository is None:
+        return None
+
+    if name is not None:
+        repository.name = name
+
+    if url is not None:
+        repository.url = url
+
+    if num_files is not None:
+        repository.num_files = num_files
+
+    repository.indexed_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(repository)
+
+    return repository    
+def delete_repository(
+    db: Session,
+    repository_id: int,
+):
+
+    repository = get_repository(
+        db=db,
+        repository_id=repository_id,
+    )
+
+    if repository is None:
+        return False
+
+    db.delete(repository)
+    db.commit()
+
+    return True    
+
+class Memory(Base):
+
+    __tablename__ = "memories"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    session_id = Column(
+        String,
+        ForeignKey("sessions.session_id"),
+        nullable=False,
+        index=True,
+    )
+
+    content = Column(
+        Text,
+        nullable=False,
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+class Repository(Base):
+
+    __tablename__ = "repositories"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    session_id = Column(
+        String,
+        ForeignKey("sessions.session_id"),
+        nullable=False,
+        index=True,
+    )
+
+    name = Column(
+        String,
+        nullable=False,
+    )
+
+    url = Column(
+        String,
+        nullable=False,
+    )
+
+    indexed_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )
+
+    num_files = Column(
+        Integer,
+        default=0,
+    )    
 
 def get_document(
     db: Session,
