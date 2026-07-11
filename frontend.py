@@ -406,6 +406,14 @@ with gr.Blocks(
         inputs=upload,
         outputs=status,
     )
+    demo.load(
+        fn=initialize,
+        outputs=[
+        thread_id,
+        chatbot,
+        welcome,
+    ],
+    )
 
     attach_btn.upload(
         fn=upload_document_impl,

@@ -2,9 +2,21 @@ import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
-from datetime import datetime
+
 from sqlalchemy.orm import Session
 from uuid import uuid4
+from models import Conversation
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Text,
+    DateTime,
+    Boolean,
+    ForeignKey,
+)
+
+from sqlalchemy.sql import func
 
 load_dotenv()
 
@@ -18,8 +30,6 @@ DATABASE_URL = DATABASE_URL.replace(
 
 engine = create_engine(DATABASE_URL)
 
-
-
 SessionLocal =sessionmaker(
     bind=engine,
     autocommit=False,
@@ -27,26 +37,6 @@ SessionLocal =sessionmaker(
 )
 
 Base =declarative_base()
-
-def get_db():
-    db=SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()    
-
-from sqlalchemy import (
-    Column,
-    Integer,
-    String,
-    Text,
-    DateTime,
-    Boolean,
-    ForeignKey,
-)
-
-from sqlalchemy.sql import func
-
 
 class Conversation(Base):
     __tablename__ = "conversations"
@@ -107,7 +97,12 @@ class Permission(Base):
 def init_db():
     Base.metadata.create_all(bind=engine)
 
-
+def get_db():
+    db=SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()    
 
 def create_conversation(db: Session):
 
@@ -123,6 +118,43 @@ def create_conversation(db: Session):
 
     return conversation
 
+def get_conversation(
+    db: Session,
+    thread_id: str,
+):
+    return (
+        db.query(Conversation)
+        .filter(Conversation.thread_id == thread_id)
+        .first()
+    )
+
+
+def list_conversations(
+    db: Session,
+):
+    return (
+        db.query(Conversation)
+        .order_by(Conversation.updated_at.desc())
+        .all()
+    )
+
+def delete_conversation(
+    db: Session,
+    thread_id: str,
+):
+    (
+        db.query(Message)
+        .filter(Message.thread_id == thread_id)
+        .delete()
+    )
+
+    (
+        db.query(Conversation)
+        .filter(Conversation.thread_id == thread_id)
+        .delete()
+    )
+
+    db.commit()
 
 def save_message(
     db: Session,
@@ -138,6 +170,21 @@ def save_message(
     )
 
     db.add(message)
+
+    conversation = (
+        db.query(Conversation)
+        .filter(Conversation.thread_id == thread_id)
+        .first()
+    )
+
+    if conversation:
+        conversation.updated_at = func.now()
+
+        if (
+            role == "user"
+            and not conversation.title
+        ):
+            conversation.title = content.strip()[:50]
     db.commit()
 
 
@@ -145,14 +192,15 @@ def get_messages(
     db: Session,
     thread_id: str,
 ):
-
     return (
         db.query(Message)
         .filter(Message.thread_id == thread_id)
-        .order_by(Message.created_at)
+        .order_by(
+            Message.created_at,
+            Message.id,
+        )
         .all()
     )
-
 
 def save_memory(
     db: Session,
@@ -211,6 +259,15 @@ def add_document(
     num_chunks: int,
 ):
 
+    existing = (
+        db.query(Document)
+        .filter(Document.filename == filename)
+        .first()
+    )
+
+    if existing:
+        return existing
+
     document = Document(
         filename=filename,
         num_chunks=num_chunks,
@@ -218,6 +275,9 @@ def add_document(
 
     db.add(document)
     db.commit()
+    db.refresh(document)
+
+    return document
 
 
 def list_documents(
@@ -229,13 +289,12 @@ def list_documents(
     .order_by(Document.uploaded_at.desc())
     .all()
 )       
-
 def delete_document(
     db: Session,
     filename: str,
 ):
 
-    (
+    deleted = (
         db.query(Document)
         .filter(Document.filename == filename)
         .delete()
@@ -243,6 +302,8 @@ def delete_document(
 
     db.commit()
 
+    return deleted > 0
+    
 def grant_permission(
     db: Session,
     resource: str,
@@ -265,40 +326,18 @@ def grant_permission(
         existing.expires_at = None
 
     else:
-        db.add(
-            Permission(
-                resource=resource,
-                permission=permission,
-                scope=scope,
-                granted=True,
-            )
+        existing = Permission(
+            resource=resource,
+            permission=permission,
+            scope=scope,
+            granted=True,
         )
+        db.add(existing)
 
     db.commit()
+    db.refresh(existing)
 
-
-def revoke_permission(
-    db: Session,
-    resource: str,
-    permission: str,
-):
-
-    existing = (
-        db.query(Permission)
-        .filter(
-            Permission.resource == resource,
-            Permission.permission == permission,
-        )
-        .first()
-    )
-
-    if existing:
-        existing.granted = False
-        existing.scope = "session"
-        existing.expires_at = None
-
-    db.commit()
-
+    return existing
 
 def has_permission(
     db: Session,
@@ -323,10 +362,12 @@ def clear_session_permissions(
     db: Session,
 ):
 
-    (
+    deleted = (
         db.query(Permission)
         .filter(Permission.scope == "session")
         .delete()
     )
 
     db.commit()
+
+    return deleted
