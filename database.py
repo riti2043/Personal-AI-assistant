@@ -5,7 +5,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from secrets import token_urlsafe
 from sqlalchemy.orm import Session
 from uuid import uuid4
-from models import Conversation
+from datetime import datetime
 from sqlalchemy import (
     Column,
     Integer,
@@ -89,9 +89,20 @@ class Conversation(Base):
         index=True,
     )
 
+    title = Column(
+        String,
+        nullable=True,
+    )
+
     created_at = Column(
         DateTime,
         default=datetime.utcnow,
+    )
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
     )
 
 class Message(Base):
@@ -109,32 +120,149 @@ class Message(Base):
 
 
 class Memory(Base):
+
     __tablename__ = "memories"
 
-    id = Column(Integer, primary_key=True)
-    key = Column(String, unique=True, nullable=False)
-    value = Column(Text, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
 
+    session_id = Column(
+        String,
+        ForeignKey("sessions.session_id"),
+        nullable=False,
+        index=True,
+    )
+
+    content = Column(
+        Text,
+        nullable=False,
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
+class Repository(Base):
+
+    __tablename__ = "repositories"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    session_id = Column(
+        String,
+        ForeignKey("sessions.session_id"),
+        nullable=False,
+        index=True,
+    )
+
+    name = Column(
+        String,
+        nullable=False,
+    )
+
+    url = Column(
+        String,
+        nullable=False,
+    )
+
+    indexed_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )
+
+    num_files = Column(
+        Integer,
+        default=0,
+    )    
 
 class Document(Base):
+
     __tablename__ = "documents"
 
-    id = Column(Integer, primary_key=True)
-    filename = Column(String, unique=True, nullable=False)
-    num_chunks = Column(Integer)
-    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
 
+    session_id = Column(
+        String,
+        ForeignKey("sessions.session_id"),
+        nullable=False,
+        index=True,
+    )
 
+    filename = Column(
+        String,
+        nullable=False,
+    )
+
+    num_chunks = Column(
+        Integer,
+        default=0,
+    )
+
+    uploaded_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )
 class Permission(Base):
+
     __tablename__ = "permissions"
 
-    id = Column(Integer, primary_key=True)
-    resource = Column(String, nullable=False)
-    permission = Column(String, nullable=False)
-    scope = Column(String, default="session")
-    expires_at = Column(DateTime(timezone=True), nullable=True)
-    granted = Column(Boolean, default=False)        
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    session_id = Column(
+        String,
+        ForeignKey("sessions.session_id"),
+        nullable=False,
+        index=True,
+    )
+
+    resource = Column(
+        String,
+        nullable=False,
+    )
+
+    permission = Column(
+        String,
+        nullable=False,
+    )
+
+    scope = Column(
+        String,
+        default="session",
+    )
+
+    expires_at = Column(
+        DateTime,
+        nullable=True,
+    )
+
+    granted = Column(
+        Boolean,
+        default=False,
+    )
+
 
 def init_db():
     Base.metadata.create_all(bind=engine)
@@ -478,76 +606,6 @@ def delete_repository(
 
     return True    
 
-class Memory(Base):
-
-    __tablename__ = "memories"
-
-    id = Column(
-        Integer,
-        primary_key=True,
-        index=True,
-    )
-
-    session_id = Column(
-        String,
-        ForeignKey("sessions.session_id"),
-        nullable=False,
-        index=True,
-    )
-
-    content = Column(
-        Text,
-        nullable=False,
-    )
-
-    created_at = Column(
-        DateTime,
-        default=datetime.utcnow,
-    )
-
-    updated_at = Column(
-        DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
-
-class Repository(Base):
-
-    __tablename__ = "repositories"
-
-    id = Column(
-        Integer,
-        primary_key=True,
-        index=True,
-    )
-
-    session_id = Column(
-        String,
-        ForeignKey("sessions.session_id"),
-        nullable=False,
-        index=True,
-    )
-
-    name = Column(
-        String,
-        nullable=False,
-    )
-
-    url = Column(
-        String,
-        nullable=False,
-    )
-
-    indexed_at = Column(
-        DateTime,
-        default=datetime.utcnow,
-    )
-
-    num_files = Column(
-        Integer,
-        default=0,
-    )    
-
 def get_document(
     db: Session,
     filename: str,
@@ -611,6 +669,7 @@ def delete_document(
     
 def grant_permission(
     db: Session,
+    session_id: str,
     resource: str,
     permission: str,
     scope: str = "session",
@@ -619,6 +678,7 @@ def grant_permission(
     existing = (
         db.query(Permission)
         .filter(
+            Permission.session_id == session_id,
             Permission.resource == resource,
             Permission.permission == permission,
         )
@@ -632,6 +692,7 @@ def grant_permission(
 
     else:
         existing = Permission(
+            session_id=session_id,
             resource=resource,
             permission=permission,
             scope=scope,
@@ -646,6 +707,7 @@ def grant_permission(
 
 def has_permission(
     db: Session,
+    session_id: str,
     resource: str,
     permission: str,
 ):
@@ -653,26 +715,30 @@ def has_permission(
     existing = (
         db.query(Permission)
         .filter(
+            Permission.session_id == session_id,
             Permission.resource == resource,
             Permission.permission == permission,
-            Permission.granted.is_(True) ,
+            Permission.granted.is_(True),
         )
         .first()
     )
 
     return existing is not None
-
-
+    
 def clear_session_permissions(
     db: Session,
+    session_id: str,
 ):
 
     deleted = (
         db.query(Permission)
-        .filter(Permission.scope == "session")
+        .filter(
+            Permission.session_id == session_id,
+            Permission.scope == "session",
+        )
         .delete()
     )
 
     db.commit()
 
-    return deleted
+    return deleted > 0

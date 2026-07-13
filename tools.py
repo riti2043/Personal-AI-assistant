@@ -18,7 +18,10 @@ from database import (
     get_repositories,
     delete_repository,
 )
-
+import requests
+from bs4 import BeautifulSoup
+from tavily import TavilyClient
+from readability import Document
 from permissions import check_permission
 from mcp_client import mcp
 import shutil
@@ -34,6 +37,9 @@ vector_store = PGVector(
     embeddings=embedding_model,
     collection_name="rune_documents",
     connection=os.getenv("DATABASE_URL"),
+)
+tavily = TavilyClient(
+    api_key=os.getenv("TAVILY_API_KEY")
 )
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
@@ -122,6 +128,7 @@ def upload_document_impl(session_id: str,file_path: str,):
     try:
         existing = get_document(
             db=db,
+            session_id=session_id,
             filename=filename,
         )
 
@@ -139,6 +146,7 @@ def upload_document_impl(session_id: str,file_path: str,):
 
         for i, chunk in enumerate(chunks):
             chunk.metadata["source"] = filename
+            chunk.metadata["type"] = "document"
             chunk.metadata["chunk"] = i + 1
             chunk.metadata["total_chunks"] = len(chunks)
 
@@ -159,8 +167,9 @@ def upload_document_impl(session_id: str,file_path: str,):
     finally:
         db.close()   
 
-def list_uploaded_documents_impl(session_id=session_id,):
-
+def list_uploaded_documents_impl(
+    session_id: str,
+):
     db = SessionLocal()
 
     try:
@@ -243,6 +252,7 @@ def load_repository(
     return documents
 
 def index_repository_impl(
+    session_id: str,
     repo_url: str,
 ):
 
@@ -265,7 +275,7 @@ def index_repository_impl(
 
         add_repository(
             db=db,
-            session_id="",      # we'll wire session later
+            session_id=session_id,      # we'll wire session later
             name=repo_path.name,
             url=repo_url,
             num_files=len(documents),
@@ -278,7 +288,7 @@ def index_repository_impl(
         f"Indexed '{repo_path.name}' "
         f"({len(documents)} files)."
     )
-def list_repositories_impl():
+def list_repositories_impl(session_id: str):
 
     db = SessionLocal()
 
@@ -286,7 +296,7 @@ def list_repositories_impl():
 
         repositories = get_repositories(
             db=db,
-            session_id="",      # session later
+            session_id=session_id,      # session later
         )
 
     finally:
@@ -298,9 +308,9 @@ def list_repositories_impl():
     ]
 
 def delete_repository_impl(
+    session_id: str,
     repository_id: int,
 ):
-
     db = SessionLocal()
 
     try:
@@ -314,17 +324,61 @@ def delete_repository_impl(
         db.close()
 
     return deleted
-
 @tool
-def upload_document(session_id=session_id,file_path: str,):
+def upload_document(
+    session_id: str,
+    file_path: str,
+):
     """Upload and index a document for retrieval."""
     return upload_document_impl(session_id=session_id,file_path=file_path)
 
 
 @tool
-def list_uploaded_documents( session_id: str,):
+def list_uploaded_documents(
+    session_id: str,
+):
     """List all indexed documents."""
-    return list_uploaded_documents_impl( session_id,)
+
+    return list_uploaded_documents_impl(
+        session_id=session_id,
+    )
+
+@tool
+def upload_repository(
+    session_id: str,
+    repo_url: str,
+):
+    """Clone and index a Git repository."""
+
+    return index_repository_impl(
+        session_id=session_id,
+        repo_url=repo_url,
+    )
+
+
+@tool
+def list_repositories(
+    session_id: str,
+):
+    """List indexed repositories."""
+
+    return list_repositories_impl(
+        session_id=session_id,
+    )
+
+
+@tool
+def delete_repository(
+    session_id: str,
+    repository_id: int,
+):
+    """Delete an indexed repository."""
+
+    return delete_repository_impl(
+        session_id=session_id,
+        repository_id=repository_id,
+    )
+
 
 @tool
 def rag_tool(query:str):
@@ -476,22 +530,67 @@ async def calendar(
     )
     
 @tool
-def search(query: str) -> str:
+def search(
+    query: str,
+    max_results: int = 5,
+) -> str:
     """
-    Search the web.
+    Search the web using Tavily.
     """
-    return "Search integration not implemented yet."
+
+    response = tavily.search(
+        query=query,
+        max_results=max_results,
+        search_depth="advanced",
+        include_answer=True,
+        include_raw_content=False,
+    )
+
+    output = []
+
+    if response.get("answer"):
+        output.append(
+            f"Answer:\n{response['answer']}"
+        )
+
+    for result in response.get("results", []):
+
+        output.append(
+            f"Title: {result['title']}\n"
+            f"URL: {result['url']}\n"
+            f"Content: {result['content']}"
+        )
+
+    return "\n\n".join(output)
 
 @tool
-def scrape(url: str) -> str:
+def scrape(
+    url: str,
+) -> str:
     """
-    Scrape a webpage.
+    Extract webpage content using Tavily.
     """
-    return "Web scraping integration not implemented yet."
 
+    response = tavily.extract(
+        urls=[url],
+    )
+
+    results = response.get("results", [])
+
+    if not results:
+        return "Unable to extract webpage."
+
+    return results[0].get(
+        "raw_content",
+        "No content extracted.",
+    )
+    
 tools = [
     upload_document,
     list_uploaded_documents,
+    upload_repository,
+    list_repositories,
+    delete_repository,
     rag_tool,
     github,
     filesystem,

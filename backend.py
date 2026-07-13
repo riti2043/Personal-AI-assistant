@@ -9,21 +9,34 @@ from langgraph.graph import START
 from langgraph.types import interrupt, Command
 from prompts import SYSTEM_PROMPT
 from database import (
-    SessionLocal,
-    init_db,
-    create_conversation,
-     get_conversations,
-    delete_conversation,
-    save_message,
-    get_messages,
+SessionLocal,
+init_db,
+create_session,
+save_memory,
+get_memories,
+delete_memory,
+add_repository,
+get_repositories,
+delete_repository,
+delete_conversation,
+create_conversation,
+get_conversations,
+save_message,
+get_messages,
 )
 from mcp_client import mcp
 from permissions import (
     register_permission_handler,
 )
 
-from tools import tools
-from openai_client import chat_model
+from tools import (
+    tools,
+     rag_tool,
+    upload_repository as upload_repository_tool,
+    list_repositories as list_repositories_tool,
+    delete_repository as delete_repository_tool,
+)
+from openai_client import chat_model, embedding_model
 from langgraph.checkpoint.memory import MemorySaver
 
 
@@ -94,21 +107,184 @@ def permission_interrupt(
             "reason": reason,
         }
     )
+def detect_memory_trigger(
+    message: str,
+) -> bool:
 
-def assistant(state: RuneState):
+    triggers = (
+        "remember that",
+        "remember this",
+        "don't forget",
+        "my name is",
+        "i prefer",
+        "i like",
+        "i usually",
+        "always remember",
+    )
+
+    message = message.lower()
+
+    return any(
+        trigger in message
+        for trigger in triggers
+    )
+
+def save_long_term_memory(
+    session_id: str,
+    content: str,
+):
+
+    db = SessionLocal()
+
+    try:
+
+        return save_memory(
+            db=db,
+            session_id=session_id,
+            content=content,
+        )
+
+    finally:
+        db.close()
+
+def load_long_term_memory(
+    session_id: str,
+):
+
+    db = SessionLocal()
+
+    try:
+
+        memories = get_memories(
+            db=db,
+            session_id=session_id,
+        )
+
+    finally:
+        db.close()
+
+    return [
+        memory.content
+        for memory in memories
+    ]           
+def assistant(
+    state: RuneState,
+):
+
+    session_id = state["session_id"]
+
+    # Load long-term memory
+    long_term_memory = load_long_term_memory(
+        session_id=session_id,
+    )
+
+    system_prompt = SYSTEM_PROMPT
+
+    if long_term_memory:
+
+        system_prompt += (
+            "\n\n### User Information\n"
+            + "\n".join(
+                f"- {memory}"
+                for memory in long_term_memory
+            )
+        )
+
+    # Retrieve relevant RAG context
+    retrieved_context = ""
+
+    if state["messages"]:
+
+        last_message = state["messages"][-1]
+
+        if isinstance(
+            last_message,
+            HumanMessage,
+        ):
+
+            try:
+
+                retrieved_context = rag_tool.invoke(
+                    {
+                        "query": last_message.content,
+                    }
+                )
+
+            except Exception:
+
+                retrieved_context = ""
+
+    if retrieved_context:
+
+        system_prompt += (
+            "\n\n### Relevant Knowledge\n"
+            + retrieved_context
+        )
 
     messages = [
         SystemMessage(
-            content=SYSTEM_PROMPT,
+            content=system_prompt,
         ),
         *state["messages"],
     ]
 
     response = chat_model.invoke(messages)
 
+    # Save long-term memory if requested
+    if (
+        state["messages"]
+        and isinstance(
+            state["messages"][-1],
+            HumanMessage,
+        )
+    ):
+
+        user_message = state["messages"][-1].content
+
+        if detect_memory_trigger(
+            user_message,
+        ):
+
+            save_long_term_memory(
+                session_id=session_id,
+                content=user_message,
+            )
+
     return {
         "messages": [response],
     }
+
+def index_repository(
+    session_id: str,
+    repo_url: str,
+):
+
+    return upload_repository_tool.invoke(
+        {
+            "session_id": session_id,
+            "repo_url": repo_url,
+        }
+    )
+def remove_repository(
+    session_id: str,
+    repository_id: int,
+):
+
+    return delete_repository_tool.invoke(
+        {
+            "session_id": session_id,
+            "repository_id": repository_id,
+        }
+    ) 
+def list_indexed_repositories(
+    session_id: str,
+):
+
+    return list_repositories_tool.invoke(
+        {
+            "session_id": session_id,
+        }
+    )
 
 #Graph construction
 graph_builder = StateGraph(RuneState)
@@ -158,7 +334,15 @@ async def startup():
         permission_interrupt,
     )
 
+    # Warm embedding model
+    embedding_model.embed_query(
+        "Rune startup"
+    )
+
     await mcp.startup()
+
+    print("Rune backend started successfully.")
+
 
 async def shutdown():
     """
@@ -168,12 +352,19 @@ async def shutdown():
     await mcp.disconnect()
 
 #COnversation management
-def start_chat():
+def start_chat(
+    session_id: str,
+):
 
     db = SessionLocal()
 
     try:
-        conversation = create_conversation(db)
+
+        conversation = create_conversation(
+            db=db,
+            session_id=session_id,
+        )
+
         return conversation.thread_id
 
     finally:
@@ -233,12 +424,18 @@ def resume_chat(
 
     return history
 
-def list_conversations():
+def list_conversations(
+    session_id: str,
+):
 
     db = SessionLocal()
 
     try:
-        return get_conversations(db)
+
+        return get_conversations(
+            db=db,
+            session_id=session_id,
+        )
 
     finally:
         db.close()
@@ -257,12 +454,72 @@ def remove_conversation(
 
     finally:
         db.close()
+def remember(
+    session_id: str,
+    content: str,
+):
 
+    return save_long_term_memory(
+        session_id=session_id,
+        content=content,
+    )
+def list_memories(
+    session_id: str,
+):
+
+    return load_long_term_memory(
+        session_id=session_id,
+    )
+def delete_memory_entry(
+    memory_id: int,
+):
+
+    db = SessionLocal()
+
+    try:
+
+        return delete_memory(
+            db=db,
+            memory_id=memory_id,
+        )
+
+    finally:
+        db.close()
+
+def upload_repository(
+    session_id: str,
+    repo_url: str,
+):
+
+    return index_repository(
+        session_id=session_id,
+        repo_url=repo_url,
+    )
+
+
+def list_repositories(
+    session_id: str,
+):
+
+    return list_indexed_repositories(
+        session_id=session_id,
+    )
+
+
+def delete_repository_entry(
+    session_id: str,
+    repository_id: int,
+):
+
+    return remove_repository(
+        session_id=session_id,
+        repository_id=repository_id,
+    )
 
 def chat(
-    thread_id: str,
-    session_id: str
-    user_input: str,
+    session_id,
+    thread_id,
+    user_input,
 ):
 
     history = resume_chat(thread_id)
@@ -301,9 +558,9 @@ def chat(
 
 
 def stream_chat(
-    thread_id: str,
-    "session_id": session_id,
-    user_input: str,
+    session_id,
+    thread_id,
+    user_input,
 ):
 
     history = resume_chat(thread_id)
@@ -353,8 +610,8 @@ def stream_chat(
 
 
 def resume_after_permission(
+    session_id: str,
     thread_id: str,
-    "session_id": session_id,
     approved: bool,
 ):
 
