@@ -1,18 +1,21 @@
 import gradio as gr
-import asyncio
+import uuid
 
 from backend import (
     start_chat,
     chat,
     stream_chat,
     resume_after_permission,
+    list_conversations,
+    list_memories,
 )
 
 from tools import (
     upload_document_impl,
     list_uploaded_documents_impl,
+    upload_repository,
+    list_repositories,
 )
-
 # ---------------------------------------------------
 # Theme
 # ---------------------------------------------------
@@ -21,13 +24,16 @@ LIGHT_THEME = gr.themes.Soft(
     primary_hue="gray",
     secondary_hue="gray",
     neutral_hue="gray",
+    radius_size="lg",
 )
 
 DARK_THEME = gr.themes.Base(
     primary_hue="gray",
     secondary_hue="gray",
     neutral_hue="gray",
+    radius_size="lg",
 )
+
 
 # ---------------------------------------------------
 # Helpers
@@ -35,9 +41,14 @@ DARK_THEME = gr.themes.Base(
 
 def initialize():
 
-    thread_id = start_chat()
+    session_id = str(uuid.uuid4())
+
+    thread_id = start_chat(
+        session_id=session_id,
+    )
 
     return (
+        session_id,
         thread_id,
         [],
         gr.update(visible=True),
@@ -47,15 +58,21 @@ def initialize():
 def send_message(
     message,
     history,
+    session_id,
     thread_id,
 ):
 
     if not message.strip():
+
         yield history, ""
+
         return
 
     history.append(
-        (message, "")
+        (
+            message,
+            "",
+        )
     )
 
     yield history, ""
@@ -63,8 +80,9 @@ def send_message(
     response = ""
 
     for partial in stream_chat(
-        thread_id,
-        message,
+        session_id=session_id,
+        thread_id=thread_id,
+        user_input=message,
     ):
 
         response = partial
@@ -76,10 +94,13 @@ def send_message(
 
         yield history, ""
 
+def clear_chat(
+    session_id,
+):
 
-def clear_chat():
-
-    thread_id = start_chat()
+    thread_id = start_chat(
+        session_id=session_id,
+    )
 
     return (
         [],
@@ -88,11 +109,29 @@ def clear_chat():
     )
 
 
-def uploaded_docs():
+def uploaded_docs(
+    session_id,
+):
 
-    return "\n".join(
-        list_uploaded_documents_impl()
+    documents = list_uploaded_documents_impl(
+        session_id=session_id,
     )
+
+    return "\n".join(documents)
+
+
+def uploaded_repositories(
+    session_id,
+):
+
+    repositories = list_repositories(
+        session_id=session_id,
+    )
+
+    if not repositories:
+        return ""
+
+    return "\n".join(repositories)
 
 
 # ---------------------------------------------------
@@ -103,6 +142,7 @@ with gr.Blocks(
     title="Rune",
     theme=DARK_THEME,
 ) as demo:
+    session_id = gr.State()
 
     thread_id = gr.State()
 
@@ -352,6 +392,7 @@ with gr.Blocks(
         inputs=[
             message,
             chatbot,
+            session_id,
             thread_id,
         ],
         outputs=[
@@ -371,6 +412,7 @@ with gr.Blocks(
         inputs=[
             message,
             chatbot,
+            session_id,
             thread_id,
         ],
         outputs=[
@@ -381,6 +423,9 @@ with gr.Blocks(
 
     new_chat_btn.click(
         fn=clear_chat,
+         inputs=[
+        session_id,
+    ],
         outputs=[
             chatbot,
             message,
@@ -390,6 +435,9 @@ with gr.Blocks(
 
     clear_history_btn.click(
         fn=clear_chat,
+        inputs=[
+            session_id,
+        ],
         outputs=[
             chatbot,
             message,
@@ -403,12 +451,16 @@ with gr.Blocks(
 
     upload.upload(
         fn=upload_document_impl,
-        inputs=upload,
+        inputs=[
+        session_id,
+        upload,
+    ],
         outputs=status,
     )
     demo.load(
         fn=initialize,
         outputs=[
+        session_id,
         thread_id,
         chatbot,
         welcome,
@@ -417,17 +469,28 @@ with gr.Blocks(
 
     attach_btn.upload(
         fn=upload_document_impl,
-        inputs=attach_btn,
+        inputs=[
+        session_id,
+        upload,
+    ],
         outputs=status,
     )
 
     upload.upload(
         fn=uploaded_docs,
+        inputs=[
+        session_id,
+        upload,
+    ], 
         outputs=document_list,
     )
 
     attach_btn.upload(
         fn=uploaded_docs,
+        inputs=[
+        session_id,
+        upload,
+    ],
         outputs=document_list,
     )
 
