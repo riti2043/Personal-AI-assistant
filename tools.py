@@ -7,6 +7,7 @@ from langchain_community.document_loaders import (
     TextLoader,
     UnstructuredWordDocumentLoader,
 )
+from git import Repo
 from langchain_postgres import PGVector
 from openai_client import embedding_model
 from database import (
@@ -25,7 +26,7 @@ from readability import Document
 from permissions import check_permission
 from mcp_client import mcp
 import shutil
-import subprocess
+
 from pathlib import Path
 
 from langchain_community.document_loaders import DirectoryLoader
@@ -196,18 +197,17 @@ def clone_repository(
     if repo_path.exists():
         shutil.rmtree(repo_path)
 
-    subprocess.run(
-        [
-            "git",
-            "clone",
-            repo_url,
-            str(repo_path),
-        ],
-        check=True,
+    repo_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    Repo.clone_from(
+        repo_url,
+        repo_path,
     )
 
     return repo_path
-
 def load_repository(
     repo_path: Path,
 ):

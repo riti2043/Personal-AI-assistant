@@ -17,7 +17,9 @@ huggingface_hub
 sentence-transformers
 transformers
 torch
+
 python-multipart
+
 sqlalchemy
 psycopg2-binary
 pgvector
@@ -26,7 +28,19 @@ pypdf
 python-docx
 unstructured
 
-httpx
+beautifulsoup4
+readability-lxml
 requests
+httpx
+lxml
+
 tavily-python>=0.5.0
+accelerate
+safetensors
 mcp
+aiohttp
+tiktoken
+GitPython
+markdownify
+pydantic
+typing-extensions

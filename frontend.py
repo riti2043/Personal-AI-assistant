@@ -10,8 +10,8 @@ from backend import (
 from tools import (
     upload_document_impl,
     list_uploaded_documents_impl,
-    upload_repository,
-    list_repositories,
+     index_repository_impl,
+    list_repositories_impl,
 )
 # ---------------------------------------------------
 # Theme
@@ -587,7 +587,7 @@ with gr.Blocks(
     ],
 )
     upload_repository_btn.click(
-        fn=upload_repository,
+        fn=index_repository_impl,
         inputs=[
             session_id,
             repository_url,
