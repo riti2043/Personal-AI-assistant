@@ -1,6 +1,7 @@
 from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from typing import Dict
 import spaces
 @spaces.GPU
 def _dummy_gpu_check():
@@ -10,7 +11,7 @@ class MCPManager:
 
     def __init__(self):
         self.exit_stack = AsyncExitStack()
-        self.sessions = dict[str, ClientSession] = {}
+        self.sessions: Dict[str, ClientSession] = {}
 
     async def connect(
         self,
