@@ -92,48 +92,21 @@ class MCPManager:
 
         return list(self.sessions.keys())
     
-    async def startup(self):
-        servers = [
-    (
-        "github",
-        "npx",
-        [
-            "-y",
-            "@modelcontextprotocol/server-github",
-        ],
-    ),
-    (
-        "filesystem",
-        "npx",
-        [
-            "-y",
-            "@modelcontextprotocol/server-filesystem",
-            ".",
-        ],
-    ),
-    (
-        "gmail",
-        "npx",
-        [
-            "-y",
-            "@gongrzhe/server-gmail-autoauth-mcp",
-        ],
-    ),
-    (
-        "calendar",
-        "npx",
-        [
-            "-y",
-            "@cocal/google-calendar-mcp",
-        ],
-    ),
-]
+    async def startup():
 
-        for server_name, command, args in servers:
-            await self.connect(
-            server_name=server_name,
-            command=command,
-            args=args,
+    try:
+        await self.connect(
+            server_name="filesystem",
+            command="npx",
+            args=[
+                "-y",
+                "@modelcontextprotocol/server-filesystem",
+                ".",
+            ],
         )
+    except Exception as e:
+        print(f"Filesystem MCP failed: {e}")
+
+    # Disable the rest for now
 
 mcp = MCPManager() 
