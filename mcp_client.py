@@ -94,18 +94,18 @@ class MCPManager:
     
     async def startup():
 
-    try:
-        await self.connect(
-            server_name="filesystem",
-            command="npx",
-            args=[
-                "-y",
-                "@modelcontextprotocol/server-filesystem",
-                ".",
-            ],
+        try:
+            await self.connect(
+                server_name="filesystem",
+                command="npx",
+                args=[
+                    "-y",
+                    "@modelcontextprotocol/server-filesystem",
+                    ".",
+                ],
         )
-    except Exception as e:
-        print(f"Filesystem MCP failed: {e}")
+        except Exception as e:
+            print(f"Filesystem MCP failed: {e}")
 
     # Disable the rest for now
 
