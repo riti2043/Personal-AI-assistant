@@ -3,11 +3,8 @@ import uuid
 
 from backend import (
     start_chat,
-    chat,
     stream_chat,
-    resume_after_permission,
     list_conversations,
-    list_memories,
 )
 
 from tools import (
@@ -113,27 +110,18 @@ def uploaded_docs(
     session_id,
 ):
 
-    documents = list_uploaded_documents_impl(
+    return list_uploaded_documents_impl(
         session_id=session_id,
     )
-
-    return "\n".join(documents)
 
 
 def uploaded_repositories(
     session_id,
 ):
 
-    repositories = list_repositories(
+    return list_repositories(
         session_id=session_id,
     )
-
-    if not repositories:
-        return ""
-
-    return "\n".join(repositories)
-
-
 # ---------------------------------------------------
 # UI
 # ---------------------------------------------------
@@ -188,6 +176,12 @@ with gr.Blocks(
 
                 settings_btn = gr.Button(
                     "Settings",
+                    variant="secondary",
+                    scale=0,
+                )
+
+                new_chat_btn = gr.Button(
+                    "New Chat",
                     variant="secondary",
                     scale=0,
                 )
@@ -264,7 +258,8 @@ with gr.Blocks(
                 "Rune Memory",
                 variant="secondary",
             ) 
-            # ---------------------------------------------------
+
+        # ---------------------------------------------------
         # Workspace
         # ---------------------------------------------------
 
@@ -295,10 +290,10 @@ with gr.Blocks(
                 "### Documents"
             )
 
-            document_list = gr.Textbox(
-                label="",
-                lines=8,
-                interactive=False,
+            document_list = gr.Radio(
+                choices=[],
+                label="Documents",
+                interactive=True,
             )
 
             upload = gr.File(
@@ -316,10 +311,10 @@ with gr.Blocks(
                 "### Repositories"
             )
 
-            repository_list = gr.Textbox(
-                label="",
-                lines=8,
-                interactive=False,
+            repository_list = gr.Radio(
+                choices=[],
+                label="Repositories",
+                interactive=True,
             )
 
             repository_url = gr.Textbox(
@@ -377,256 +372,268 @@ with gr.Blocks(
             add_memory_btn = gr.Button(
                 "Add Memory",
             )
+
         # ---------------------------------------------------
-    # Settings Panel
+        # Settings Panel
+        # ---------------------------------------------------
+
+        settings_panel = gr.Column(
+            visible=False,
+        )
+
+        with settings_panel:
+
+            gr.Markdown(
+                "## Settings"
+            )
+
+            theme_selector = gr.Radio(
+                choices=[
+                    "Dark",
+                    "Light",
+                ],
+                value="Dark",
+                label="Theme",
+            )
+
+            clear_history_btn = gr.Button(
+                "Clear Current Conversation",
+                variant="secondary",
+            )
+
+    # ---------------------------------------------------
+    # Home → Chat Transition
     # ---------------------------------------------------
 
-    settings_panel = gr.Column(
-        visible=False,
+    def hide_home():
+
+        return (
+            gr.update(visible=False),
+            gr.update(visible=True),
+        )
+
+    # ---------------------------------------------------
+    # Workspace Navigation
+    # ---------------------------------------------------
+
+    def show_conversation():
+
+        return (
+            gr.update(visible=True),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=False),
+        )
+
+
+    def show_documents():
+
+        return (
+            gr.update(visible=False),
+            gr.update(visible=True),
+            gr.update(visible=False),
+            gr.update(visible=False),
+        )
+
+
+    def show_repositories():
+
+        return (
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=True),
+            gr.update(visible=False),
+        )
+
+
+    def show_memory():
+
+        return (
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=True),
+        )
+
+    conversation_tab.click(
+        fn=show_conversation,
+        outputs=[
+            conversation_workspace,
+            documents_workspace,
+            repositories_workspace,
+            memory_workspace,
+        ],
     )
 
-    with settings_panel:
+    documents_tab.click(
+        fn=show_documents,
+        outputs=[
+            conversation_workspace,
+            documents_workspace,
+            repositories_workspace,
+            memory_workspace,
+        ],
+    )
 
-        gr.Markdown(
-            "## Settings"
-        )
+    repositories_tab.click(
+        fn=show_repositories,
+        outputs=[
+            conversation_workspace,
+            documents_workspace,
+            repositories_workspace,
+            memory_workspace,
+        ],
+    )
 
-        theme_selector = gr.Radio(
-            choices=[
-                "Dark",
-                "Light",
-            ],
-            value="Dark",
-            label="Theme",
-        )
+    memory_tab.click(
+        fn=show_memory,
+        outputs=[
+            conversation_workspace,
+            documents_workspace,
+            repositories_workspace,
+            memory_workspace,
+        ],
+    )
 
-        clear_history_btn = gr.Button(
-            "Clear Current Conversation",
-            variant="secondary",
-        )
+    # ---------------------------------------------------
+    # Backend Wiring
+    # ---------------------------------------------------
 
-        # ---------------------------------------------------
-        # Home → Chat Transition
-        # ---------------------------------------------------
+    send_event = send_btn.click(
+        fn=hide_home,
+        outputs=[
+            welcome,
+            chatbot,
+        ],
+    ).then(
+        fn=list_conversations,
+        inputs=[
+            session_id,
+        ],
+        outputs=[
+            conversation_list,
+        ],
+)
 
-        def hide_home():
+    message.submit(
+        fn=hide_home,
+        outputs=[
+            welcome,
+            chatbot,
+        ],
+    ).then(
+        fn=list_conversations,
+        inputs=[
+            session_id,
+        ],
+        outputs=[
+            conversation_list,
+        ],
+    )
 
-            return (
-                gr.update(visible=False),
-                gr.update(visible=True),
-            )
+    new_chat_btn.click(
+        fn=clear_chat,
+        inputs=[
+            session_id,
+        ],
+        outputs=[
+            chatbot,
+            message,
+            thread_id,
+        ],
+    ).then(
+        fn=list_conversations,
+        inputs=[
+            session_id,
+    ],
+        outputs=[
+            conversation_list,
+    ],
+)
 
-        # ---------------------------------------------------
-        # Workspace Navigation
-        # ---------------------------------------------------
+    clear_history_btn.click(
+        fn=clear_chat,
+        inputs=[
+            session_id,
+        ],
+        outputs=[
+            chatbot,
+            message,
+            thread_id,
+        ],
+    )
 
-        def show_conversation():
+    # ---------------------------------------------------
+    # Upload
+    # ---------------------------------------------------
 
-            return (
-                gr.update(visible=True),
-                gr.update(visible=False),
-                gr.update(visible=False),
-                gr.update(visible=False),
-            )
+    upload.upload(
+        fn=upload_document_impl,
+        inputs=[
+            session_id,
+            upload,
+        ],
+        outputs=[
+            status,
+        ],
 
-
-        def show_documents():
-
-            return (
-                gr.update(visible=False),
-                gr.update(visible=True),
-                gr.update(visible=False),
-                gr.update(visible=False),
-            )
-
-
-        def show_repositories():
-
-            return (
-                gr.update(visible=False),
-                gr.update(visible=False),
-                gr.update(visible=True),
-                gr.update(visible=False),
-            )
-
-
-        def show_memory():
-
-            return (
-                gr.update(visible=False),
-                gr.update(visible=False),
-                gr.update(visible=False),
-                gr.update(visible=True),
-            )
-
-        conversation_tab.click(
-            fn=show_conversation,
-            outputs=[
-                conversation_workspace,
-                documents_workspace,
-                repositories_workspace,
-                memory_workspace,
-            ],
-        )
-
-        documents_tab.click(
-            fn=show_documents,
-            outputs=[
-                conversation_workspace,
-                documents_workspace,
-                repositories_workspace,
-                memory_workspace,
-            ],
-        )
-
-        repositories_tab.click(
-            fn=show_repositories,
-            outputs=[
-                conversation_workspace,
-                documents_workspace,
-                repositories_workspace,
-                memory_workspace,
-            ],
-        )
-
-        memory_tab.click(
-            fn=show_memory,
-            outputs=[
-                conversation_workspace,
-                documents_workspace,
-                repositories_workspace,
-                memory_workspace,
-            ],
-        )
-
-        # ---------------------------------------------------
-        # Backend Wiring
-        # ---------------------------------------------------
-
-        send_event = send_btn.click(
-            fn=hide_home,
-            outputs=[
-                welcome,
-                chatbot,
-            ],
-        ).then(
-            fn=send_message,
-            inputs=[
-                message,
-                chatbot,
-                session_id,
-                thread_id,
-            ],
-            outputs=[
-                chatbot,
-                message,
-            ],
-        )
-
-        message.submit(
-            fn=hide_home,
-            outputs=[
-                welcome,
-                chatbot,
-            ],
-        ).then(
-            fn=send_message,
-            inputs=[
-                message,
-                chatbot,
-                session_id,
-                thread_id,
-            ],
-            outputs=[
-                chatbot,
-                message,
-            ],
-        )
-
-        new_chat_btn.click(
-            fn=clear_chat,
-            inputs=[
-                session_id,
-            ],
-            outputs=[
-                chatbot,
-                message,
-                thread_id,
-            ],
-        )
-
-        clear_history_btn.click(
-            fn=clear_chat,
-            inputs=[
-                session_id,
-            ],
-            outputs=[
-                chatbot,
-                message,
-                thread_id,
-            ],
-        )
-
-        # ---------------------------------------------------
-        # Upload
-        # ---------------------------------------------------
-
-        upload.upload(
-            fn=upload_document_impl,
-            inputs=[
-                session_id,
-                upload,
-            ],
-            outputs=status,
-        ).then(
-            fn=uploaded_docs,
-            inputs=[
-                session_id,
-            ],
-            outputs=document_list,
-        )
-        upload_repository_btn.click(
-            fn=upload_repository,
-            inputs=[
-                session_id,
-                repository_url,
-            ],
-            outputs=status,
-        ).then(
-            fn=uploaded_repositories,
-            inputs=[
-                session_id,
-            ],
-            outputs=repository_list,
-        )
-        demo.load(
-            fn=initialize,
-            outputs=[
-                session_id,
-                thread_id,
-                chatbot,
-                welcome,
-            ],
-        ).then(
-            fn=uploaded_docs,
-            inputs=[
-                session_id,
-            ],
-            outputs=document_list,
-        ).then(
-            fn=uploaded_repositories,
-            inputs=[
-                session_id,
-            ],
-            outputs=repository_list,
-        )
-        demo.load(
-            fn=list_conversations,
-            inputs=[
-                session_id,
-            ],
-            outputs=conversation_list,
-        )
+    ).then(
+        fn=uploaded_docs,
+        inputs=[
+            session_id,
+    ],
+        outputs=[
+            document_list,
+    ],
+)
+    upload_repository_btn.click(
+        fn=upload_repository,
+        inputs=[
+            session_id,
+            repository_url,
+    ],
+        outputs=[
+            status,
+    ],
+    ).then(
+        fn=uploaded_repositories,
+        inputs=[
+            session_id,
+    ],
+        outputs=[
+            repository_list,
+    ],
+)
+    demo.load(
+        fn=initialize,
+        outputs=[
+            session_id,
+            thread_id,
+            chatbot,
+            welcome,
+        ],
+    ).then(
+        fn=uploaded_docs,
+        inputs=[
+            session_id,
+        ],
+        outputs=document_list,
+    ).then(
+        fn=uploaded_repositories,
+        inputs=[
+            session_id,
+        ],
+        outputs=repository_list,
+    ).then(
+        fn=list_conversations,
+        inputs=[
+            session_id,
+    ],
+        outputs=[
+            conversation_list,
+    ],  
+)
+   
 # ---------------------------------------------------
 # Suggested Actions
 # ---------------------------------------------------
