@@ -92,7 +92,7 @@ class MCPManager:
 
         return list(self.sessions.keys())
     
-    async def startup():
+    async def startup(self):
 
         try:
             await self.connect(
