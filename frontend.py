@@ -142,6 +142,11 @@ with gr.Blocks(
     title="Rune",
     theme=DARK_THEME,
 ) as demo:
+
+    # ---------------------------------------------------
+    # Application State
+    # ---------------------------------------------------
+
     session_id = gr.State()
 
     thread_id = gr.State()
@@ -150,214 +155,261 @@ with gr.Blocks(
 
     current_theme = gr.State("dark")
 
-    with gr.Row():
+    active_workspace = gr.State("conversation")
 
-        # ------------------------------------------
-        # Sidebar
-        # ------------------------------------------
+    # ---------------------------------------------------
+    # Main Layout
+    # ---------------------------------------------------
 
-        with gr.Column(
-            scale=1,
-            min_width=230,
-        ) as sidebar:
+    with gr.Column():
 
-            gr.Markdown(
-                "## Rune"
+        # ---------------------------------------------------
+        # Top Bar
+        # ---------------------------------------------------
+
+        with gr.Row():
+
+            title = gr.Markdown(
+                "# Rune"
             )
 
-            new_chat_btn = gr.Button(
-                "＋ New Chat",
+            with gr.Row():
+
+                theme_toggle = gr.Radio(
+                    choices=[
+                        "Dark",
+                        "Light",
+                    ],
+                    value="Dark",
+                    show_label=False,
+                    interactive=True,
+                    scale=1,
+                )
+
+                settings_btn = gr.Button(
+                    "Settings",
+                    variant="secondary",
+                    scale=0,
+                )
+
+        # ---------------------------------------------------
+        # Chat Area
+        # ---------------------------------------------------
+
+        chatbot = gr.Chatbot(
+            label="",
+            visible=False,
+            height=620,
+            bubble_full_width=False,
+            show_copy_button=True,
+        )
+
+        welcome = gr.Column(
+            visible=True,
+        )
+        # ---------------------------------------------------
+        # Chat Area
+        # ---------------------------------------------------
+
+        welcome = gr.Column(
+            visible=True,
+        )
+
+        with welcome:
+
+            gr.Markdown(
+                "# What would you like Rune to do today?"
+            )
+
+        chatbot = gr.Chatbot(
+            label="",
+            visible=False,
+            height=620,
+            bubble_full_width=False,
+            show_copy_button=True,
+        )
+
+        # ---------------------------------------------------
+        # Input
+        # ---------------------------------------------------
+
+        with gr.Row():
+
+            message = gr.Textbox(
+                placeholder="Ask Rune anything...",
+                show_label=False,
+                lines=1,
+                scale=12,
+            )
+
+            send_btn = gr.Button(
+                "Send",
+                variant="primary",
+                scale=1,
+            )
+
+        status = gr.Markdown(
+            "",
+            visible=False,
+        )
+
+        # ---------------------------------------------------
+        # Workspace Tabs
+        # ---------------------------------------------------
+
+        with gr.Row():
+
+            conversation_tab = gr.Button(
+                "Conversation",
                 variant="secondary",
             )
 
-            gr.Markdown(
-                "### Conversations"
+            documents_tab = gr.Button(
+                "Documents",
+                variant="secondary",
+            )
+
+            repositories_tab = gr.Button(
+                "Repositories",
+                variant="secondary",
+            )
+
+            memory_tab = gr.Button(
+                "Rune Memory",
+                variant="secondary",
+            ) 
+            # ---------------------------------------------------
+        # Workspace
+        # ---------------------------------------------------
+
+        conversation_workspace = gr.Column(
+            visible=True,
+        )
+
+        with conversation_workspace:
+
+            conversation_search = gr.Textbox(
+                placeholder="Search conversations...",
+                show_label=False,
             )
 
             conversation_list = gr.Radio(
                 choices=[],
-                interactive=True,
                 show_label=False,
+                interactive=True,
             )
+
+        documents_workspace = gr.Column(
+            visible=False,
+        )
+
+        with documents_workspace:
 
             gr.Markdown(
-                "### Upload Document"
-            )
-
-            upload = gr.File(
-                file_count="single",
-                label="Drag & Drop",
+                "### Documents"
             )
 
             document_list = gr.Textbox(
-                label="Indexed Documents",
-                interactive=False,
-                lines=8,
-            )
-
-            settings_btn = gr.Button(
-                "Settings",
-            )
-
-        # ------------------------------------------
-        # Main Workspace
-
-        # ------------------------------------------
-
-        with gr.Column(scale=5):
-
-            with gr.Row():
-
-                gr.Markdown("# Rune")
-
-                theme_toggle = gr.Button(
-                    "🌙",
-                    size="sm",
-                )
-            # ------------------------------------------
-            # Home / Chat Area
-            # ------------------------------------------
-
-            welcome = gr.Column(visible=True)
-
-            with welcome:
-
-                gr.Markdown(
-                    """
-                    # What would you like Rune to do?
-                    """
-                )
-
-                with gr.Row():
-
-                    github_card = gr.Button(
-                        "Open a Repository",
-                        variant="secondary",
-                    )
-
-                    pdf_card = gr.Button(
-                        "Summarize a PDF",
-                        variant="secondary",
-                    )
-
-                    search_card = gr.Button(
-                        "Search the Web",
-                        variant="secondary",
-                    )
-
-                with gr.Row():
-
-                    email_card = gr.Button(
-                        "Read my Emails",
-                        variant="secondary",
-                    )
-
-                    calendar_card = gr.Button(
-                        "Plan my Day",
-                        variant="secondary",
-                    )
-
-                    docs_card = gr.Button(
-                        "Explore Documents",
-                        variant="secondary",
-                    )
-
-            chatbot = gr.Chatbot(
                 label="",
-                visible=False,
-                height=620,
-                bubble_full_width=False,
-                show_copy_button=True,
+                lines=8,
+                interactive=False,
             )
 
-            # ------------------------------------------
-            # Input
-            # ------------------------------------------
-
-            with gr.Row():
-
-                message = gr.Textbox(
-                    placeholder="Ask Rune anything...",
-                    show_label=False,
-                    lines=1,
-                    scale=12,
-                )
-
-                attach_btn = gr.UploadButton(
-                    "📎",
-                    file_count="single",
-                    scale=1,
-                )
-
-                send_btn = gr.Button(
-                    "➜",
-                    variant="primary",
-                    scale=1,
-                )
-
-            status = gr.Markdown(
-                "",
-                visible=False,
+            upload = gr.File(
+                label="Drag & Drop Document",
+                file_count="single",
             )
 
-    # ---------------------------------------------------
-    # Permission Dialog
-    # ---------------------------------------------------
-
-    with gr.Group(
-        visible=False,
-    ) as permission_popup:
-
-        gr.Markdown(
-            "## Permission Required"
+        repositories_workspace = gr.Column(
+            visible=False,
         )
 
-        permission_action = gr.Textbox(
-            label="Action",
-            interactive=False,
-        )
+        with repositories_workspace:
 
-        permission_target = gr.Textbox(
-            label="Target",
-            interactive=False,
-        )
-
-        permission_reason = gr.Textbox(
-            label="Reason",
-            interactive=False,
-            lines=3,
-        )
-
-        remember_permission = gr.Checkbox(
-            label="Remember for this session",
-        )
-
-        with gr.Row():
-
-            deny_btn = gr.Button(
-                "Deny",
-                variant="secondary",
+            gr.Markdown(
+                "### Repositories"
             )
 
-            approve_btn = gr.Button(
-                "Approve",
+            repository_list = gr.Textbox(
+                label="",
+                lines=8,
+                interactive=False,
+            )
+
+            repository_url = gr.Textbox(
+                placeholder="https://github.com/user/repository",
+                show_label=False,
+            )
+
+            upload_repository_btn = gr.Button(
+                "Add Repository",
                 variant="primary",
             )
 
-    # ---------------------------------------------------
-    # Settings Dialog
+        memory_workspace = gr.Column(
+            visible=False,
+        )
+
+        with memory_workspace:
+
+            name_box = gr.Textbox(
+                label="Name",
+            )
+
+            preferences_box = gr.Textbox(
+                label="Preferences",
+                lines=2,
+            )
+
+            skills_box = gr.Textbox(
+                label="Skills",
+                lines=2,
+            )
+
+            projects_box = gr.Textbox(
+                label="Projects",
+                lines=2,
+            )
+
+            other_box = gr.Textbox(
+                label="Other",
+                lines=3,
+            )
+
+            with gr.Row():
+
+                edit_memory_btn = gr.Button(
+                    "Edit",
+                    variant="secondary",
+                )
+
+                save_memory_btn = gr.Button(
+                    "Save",
+                    variant="primary",
+                )
+
+            add_memory_btn = gr.Button(
+                "Add Memory",
+            )
+        # ---------------------------------------------------
+    # Settings Panel
     # ---------------------------------------------------
 
-    with gr.Group(
+    settings_panel = gr.Column(
         visible=False,
-    ) as settings_panel:
+    )
+
+    with settings_panel:
 
         gr.Markdown(
             "## Settings"
         )
 
         theme_selector = gr.Radio(
-            choices=["Dark", "Light"],
+            choices=[
+                "Dark",
+                "Light",
+            ],
             value="Dark",
             label="Theme",
         )
@@ -376,7 +428,87 @@ with gr.Blocks(
             gr.update(visible=False),
             gr.update(visible=True),
         )
+# ---------------------------------------------------
+# Workspace Navigation
+# ---------------------------------------------------
 
+def show_conversation():
+
+    return (
+        gr.update(visible=True),
+        gr.update(visible=False),
+        gr.update(visible=False),
+        gr.update(visible=False),
+    )
+
+
+def show_documents():
+
+    return (
+        gr.update(visible=False),
+        gr.update(visible=True),
+        gr.update(visible=False),
+        gr.update(visible=False),
+    )
+
+
+def show_repositories():
+
+    return (
+        gr.update(visible=False),
+        gr.update(visible=False),
+        gr.update(visible=True),
+        gr.update(visible=False),
+    )
+
+
+def show_memory():
+
+    return (
+        gr.update(visible=False),
+        gr.update(visible=False),
+        gr.update(visible=False),
+        gr.update(visible=True),
+    )
+conversation_tab.click(
+    fn=show_conversation,
+    outputs=[
+        conversation_workspace,
+        documents_workspace,
+        repositories_workspace,
+        memory_workspace,
+    ],
+)
+
+documents_tab.click(
+    fn=show_documents,
+    outputs=[
+        conversation_workspace,
+        documents_workspace,
+        repositories_workspace,
+        memory_workspace,
+    ],
+)
+
+repositories_tab.click(
+    fn=show_repositories,
+    outputs=[
+        conversation_workspace,
+        documents_workspace,
+        repositories_workspace,
+        memory_workspace,
+    ],
+)
+
+memory_tab.click(
+    fn=show_memory,
+    outputs=[
+        conversation_workspace,
+        documents_workspace,
+        repositories_workspace,
+        memory_workspace,
+    ],
+)    
 # ---------------------------------------------------
 # Backend Wiring
 # ---------------------------------------------------
@@ -456,7 +588,27 @@ with gr.Blocks(
         upload,
     ],
         outputs=status,
-    )
+    ).then(
+        fn=uploaded_docs,
+        inputs=[
+        session_id,
+        ],
+        outputs=document_list,
+)
+    upload_repository_btn.click(
+        fn=upload_repository,
+        inputs=[
+        session_id,
+        repository_url,
+    ],
+        outputs=status,
+    ).then(
+        fn=uploaded_repositories,
+        inputs=[
+        session_id,
+    ],
+        outputs=repository_list,
+)
     demo.load(
         fn=initialize,
         outputs=[
@@ -465,65 +617,26 @@ with gr.Blocks(
         chatbot,
         welcome,
     ],
-    )
-
-    attach_btn.upload(
-        fn=upload_document_impl,
-        inputs=[
-        session_id,
-        upload,
-    ],
-        outputs=status,
-    )
-
-    upload.upload(
+    ).then(
         fn=uploaded_docs,
         inputs=[
         session_id,
-        upload,
-    ], 
-        outputs=document_list,
-    )
-
-    attach_btn.upload(
-        fn=uploaded_docs,
-        inputs=[
-        session_id,
-        upload,
     ],
         outputs=document_list,
-    )
-
+    ).then(
+        fn=uploaded_repositories,
+        inputs=[
+        session_id,
+    ],
+        outputs=repository_list,
+)
+    demo.load(
+        fn=list_conversations,
+        inputs=[
+        session_id,
+    ],
+        outputs=conversation_list,
+)
 # ---------------------------------------------------
 # Suggested Actions
 # ---------------------------------------------------
-
-    github_card.click(
-        lambda: "Open my GitHub repository.",
-        outputs=message,
-    )
-
-    pdf_card.click(
-        lambda: "Summarize this document.",
-        outputs=message,
-    )
-
-    search_card.click(
-        lambda: "Search the web.",
-        outputs=message,
-    )
-
-    email_card.click(
-        lambda: "Read my latest emails.",
-        outputs=message,
-    )
-
-    calendar_card.click(
-        lambda: "Plan my schedule today.",
-        outputs=message,
-    )
-
-    docs_card.click(
-        lambda: "Search my uploaded documents.",
-        outputs=message,
-    )        
