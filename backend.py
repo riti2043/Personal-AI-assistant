@@ -353,19 +353,30 @@ async def shutdown():
 
 #COnversation management
 def start_chat(
-    session_id: str,
+    session_id: str | None = None,
 ):
 
     db = SessionLocal()
 
     try:
 
+        if session_id is None:
+
+            session = create_session(
+                db=db,
+            )
+
+            session_id = session.session_id
+
         conversation = create_conversation(
             db=db,
             session_id=session_id,
         )
 
-        return conversation.thread_id
+        return (
+            session_id,
+            conversation.thread_id,
+        )
 
     finally:
         db.close()

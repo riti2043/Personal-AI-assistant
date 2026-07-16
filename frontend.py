@@ -38,11 +38,7 @@ DARK_THEME = gr.themes.Base(
 
 def initialize():
 
-    session_id = str(uuid.uuid4())
-
-    thread_id = start_chat(
-        session_id=session_id,
-    )
+    session_id, thread_id = start_chat()
 
     return (
         session_id,
@@ -60,10 +56,10 @@ def send_message(
 ):
 
     if not message.strip():
-
         yield history, ""
-
         return
+
+    history = history or []
 
     history.append(
         (
@@ -82,6 +78,10 @@ def send_message(
         user_input=message,
     ):
 
+        if isinstance(partial, dict):
+            yield history, ""
+            return
+
         response = partial
 
         history[-1] = (
@@ -91,11 +91,18 @@ def send_message(
 
         yield history, ""
 
+    history[-1] = (
+        message,
+        response,
+    )
+
+    yield history, ""
+
 def clear_chat(
     session_id,
 ):
 
-    thread_id = start_chat(
+    _, thread_id = start_chat(
         session_id=session_id,
     )
 
@@ -119,7 +126,7 @@ def uploaded_repositories(
     session_id,
 ):
 
-    return list_repositories(
+    return list_repositories_impl(
         session_id=session_id,
     )
 # ---------------------------------------------------
@@ -202,6 +209,7 @@ with gr.Blocks(
             )
 
         chatbot = gr.Chatbot(
+            type="tuples",
             label="",
             visible=False,
             height=620,
@@ -215,12 +223,13 @@ with gr.Blocks(
 
         with gr.Row():
 
-            message = gr.Textbox(
-                placeholder="Ask Rune anything...",
-                show_label=False,
-                lines=1,
-                scale=12,
-            )
+          message = gr.Textbox(
+            placeholder="Ask Rune anything...",
+            show_label=False,
+            lines=1,
+            scale=12,
+            interactive=True,
+        )
 
             send_btn = gr.Button(
                 "Send",
@@ -270,6 +279,7 @@ with gr.Blocks(
         with conversation_workspace:
 
             conversation_search = gr.Textbox(
+                interactive=True,
                 placeholder="Search conversations...",
                 show_label=False,
             )
@@ -318,8 +328,10 @@ with gr.Blocks(
             )
 
             repository_url = gr.Textbox(
+                interactive=True,
                 placeholder="https://github.com/user/repository",
                 show_label=False,
+
             )
 
             upload_repository_btn = gr.Button(
@@ -334,25 +346,30 @@ with gr.Blocks(
         with memory_workspace:
 
             name_box = gr.Textbox(
+                interactive=True,
                 label="Name",
             )
 
             preferences_box = gr.Textbox(
+                interactive=True,
                 label="Preferences",
                 lines=2,
             )
 
             skills_box = gr.Textbox(
+                interactive=True,
                 label="Skills",
                 lines=2,
             )
 
             projects_box = gr.Textbox(
+                interactive=True,
                 label="Projects",
                 lines=2,
             )
 
             other_box = gr.Textbox(
+                interactive=True,
                 label="Other",
                 lines=3,
             )
@@ -454,6 +471,20 @@ with gr.Blocks(
             gr.update(visible=False),
             gr.update(visible=True),
         )
+    def toggle_settings():
+
+        return gr.update(
+            visible=True,
+        )    
+    def load_conversation(
+        selected,
+    ):
+
+        if selected is None:
+            return []
+
+        return []   
+
 
     conversation_tab.click(
         fn=show_conversation,
@@ -494,16 +525,34 @@ with gr.Blocks(
             memory_workspace,
         ],
     )
+    settings_btn.click(
+        fn=toggle_settings,
+        outputs=[
+            settings_panel,
+        ],
+    )
 
     # ---------------------------------------------------
     # Backend Wiring
     # ---------------------------------------------------
 
-    send_event = send_btn.click(
+    send_btn.click(
         fn=hide_home,
         outputs=[
             welcome,
             chatbot,
+        ],
+    ).then(
+        fn=send_message,
+        inputs=[
+            message,
+            chatbot,
+            session_id,
+            thread_id,
+        ],
+        outputs=[
+            chatbot,
+            message,
         ],
     ).then(
         fn=list_conversations,
@@ -513,13 +562,25 @@ with gr.Blocks(
         outputs=[
             conversation_list,
         ],
-)
+    )
 
     message.submit(
         fn=hide_home,
         outputs=[
             welcome,
             chatbot,
+        ],
+    ).then(
+        fn=send_message,
+        inputs=[
+            message,
+            chatbot,
+            session_id,
+            thread_id,
+        ],
+        outputs=[
+            chatbot,
+            message,
         ],
     ).then(
         fn=list_conversations,
@@ -545,11 +606,11 @@ with gr.Blocks(
         fn=list_conversations,
         inputs=[
             session_id,
-    ],
+        ],
         outputs=[
             conversation_list,
-    ],
-)
+        ],
+    )
 
     clear_history_btn.click(
         fn=clear_chat,
@@ -561,11 +622,18 @@ with gr.Blocks(
             message,
             thread_id,
         ],
+    ).then(
+        fn=list_conversations,
+        inputs=[
+            session_id,
+        ],
+        outputs=[
+            conversation_list,
+        ],
     )
-
-    # ---------------------------------------------------
-    # Upload
-    # ---------------------------------------------------
+# ---------------------------------------------------
+# Upload
+# ---------------------------------------------------
 
     upload.upload(
         fn=upload_document_impl,
@@ -576,34 +644,35 @@ with gr.Blocks(
         outputs=[
             status,
         ],
-
     ).then(
         fn=uploaded_docs,
         inputs=[
             session_id,
-    ],
+        ],
         outputs=[
             document_list,
-    ],
-)
+        ],
+    )
+
     upload_repository_btn.click(
         fn=index_repository_impl,
         inputs=[
             session_id,
             repository_url,
-    ],
+        ],
         outputs=[
             status,
-    ],
+        ],
     ).then(
         fn=uploaded_repositories,
         inputs=[
             session_id,
-    ],
+        ],
         outputs=[
             repository_list,
-    ],
-)
+        ],
+    )
+
     demo.load(
         fn=initialize,
         outputs=[
@@ -617,23 +686,23 @@ with gr.Blocks(
         inputs=[
             session_id,
         ],
-        outputs=document_list,
+        outputs=[
+            document_list,
+        ],
     ).then(
         fn=uploaded_repositories,
         inputs=[
             session_id,
         ],
-        outputs=repository_list,
+        outputs=[
+            repository_list,
+        ],
     ).then(
         fn=list_conversations,
         inputs=[
             session_id,
-    ],
+        ],
         outputs=[
             conversation_list,
-    ],  
-)
-   
-# ---------------------------------------------------
-# Suggested Actions
-# ---------------------------------------------------
+        ],
+    )
