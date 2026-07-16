@@ -231,11 +231,11 @@ with gr.Blocks(
             interactive=True,
         )
 
-            send_btn = gr.Button(
+          send_btn = gr.Button(
                 "Send",
                 variant="primary",
                 scale=1,
-            )
+         )
 
         status = gr.Markdown(
             "",
